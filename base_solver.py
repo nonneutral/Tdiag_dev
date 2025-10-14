@@ -1,6 +1,5 @@
 # Solver for plasma of known number of electrons (NVal), temperature (T_e), and rotation frequency (fE)
 
-import os
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import cm
@@ -8,7 +7,6 @@ from scipy import special
 from pylab import rcParams
 
 rcParams['figure.figsize'] = 10, 6
-#os.chdir(os.path.expanduser("~/Documents/python/wabag/"))
 
 rw=.017 #radius of inner wall of cylindrical electrodes, in meters
 q_e=1.60217662e-19
