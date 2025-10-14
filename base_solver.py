@@ -225,12 +225,15 @@ voltageGuess: the potential of each grid point (a matrix)
 free_space_solution: the potential of each point in the absence of charge (a matrix)
 rmean: average radius
 """
-electrode_voltages=[0,50,10,52,0]
+initial_voltages=np.array([0,-50,-10,-50,0])
+final_voltages=np.array([0,-15,-10,-50,0])
 electrode_borders=[0.025,0.050,0.100,0.125]
-Llim=0.020
-Rlim=0.060
-sol1=find_solution(NVal=2.58e6,T_e=1960,fE=1.0e5,mur2=0.00165,B=1.6,
-                   electrodeConfig=(electrode_voltages,electrode_borders),
+Llim=0.035
+Rlim=0.100
+rampfrac=0.9
+current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages)*rampfrac
+sol1=find_solution(NVal=8.0e6,T_e=1960,fE=1.0e5,mur2=0.00165,B=1.6,
+                   electrodeConfig=(current_voltages,electrode_borders),
                    left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True)
 
 n=sol1[0]
