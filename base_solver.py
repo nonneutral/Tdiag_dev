@@ -1,7 +1,6 @@
-# Solver for antiproton plasma of known number of antiprotons (NVal), temperature (T_e), and rotation frequency (fE)
+# Solver for plasma of known number of electrons (NVal), temperature (T_e), and rotation frequency (fE)
 
 import os
-import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import cm
@@ -10,17 +9,10 @@ from pylab import rcParams
 
 rcParams['figure.figsize'] = 10, 6
 os.chdir(os.path.expanduser("~/Documents/python/wabag/"))
-path='LabVIEWpots_mix2024'
-LVpots = pd.read_csv(path, header=None, sep="\t").values
-LVoffset = 0.306 #meters
-Llim=0.020 #meters
-Rlim=0.060 #meters
-LVpots[:,0]=LVpots[:,0]+LVoffset
-LVpots=LVpots[(LVpots[:,0]>Llim) & (LVpots[:,0]<Rlim)]
 
 rw=.017 #radius of inner wall of cylindrical electrodes, in meters
 q_e=1.60217662e-19
-m_e=1.67262192e-27
+m_e=9.1093837e-31
 kb=1.38064852e-23
 e0=8.854187817e-12#farads per meter
 Mmax=1
@@ -166,7 +158,6 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
                 #       f'\t misplaced electrons = {err:0.1e}'
                 #       )
                 plt.title("on-axis potential")
-                plt.plot(LVpots[:,0],LVpots[:,1],label="LabVIEW electrode potential")
                 plt.plot(position_map_z[0,:],free_space_solution[0,:],label="solver electrode potential")
                 plt.plot(position_map_z[0,:],voltageGuess[0,:],label="charge-corrected potential")
                 plt.ylabel("potential (V)")
@@ -181,7 +172,7 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
     NS=ngrid*volume_elements
     rmean=np.sqrt(np.sum(mursq*NS)/(np.sum(NS)))*rbound/nr
     phi=np.max(free_space_solution[0,:])-np.max(voltageGuess[0,:])
-    #print('N, φ, ρ, r_0, λ_D')
+    print('N, φ, ρ, r_0, λ_D')
     print(f'{NVal:0.3e}\t{T_e:0.3e}\t{phi:0.3e}\t{n0:0.3e}\t{rmean:0.3e}\t{debye_length:0.3e}')
 
     if plotting:  
@@ -236,11 +227,11 @@ rmean: average radius
 """
 electrode_voltages=[0,50,10,52,0]
 electrode_borders=[0.025,0.050,0.100,0.125]
-for i in range(10):
-    fenow=(17+i)*3.3e3  
-    sol1=find_solution(NVal=2.58e6,T_e=1960,fE=fenow,mur2=0.00165,B=1.6,
-                       electrodeConfig=(electrode_voltages,electrode_borders),
-                       left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True)
+Llim=0.020
+Rlim=0.060
+sol1=find_solution(NVal=2.58e6,T_e=1960,fE=1.0e5,mur2=0.00165,B=1.6,
+                   electrodeConfig=(electrode_voltages,electrode_borders),
+                   left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True)
 
 n=sol1[0]
 voltageGuess=sol1[3]
