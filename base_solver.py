@@ -8,7 +8,7 @@ from scipy import special
 from pylab import rcParams
 
 rcParams['figure.figsize'] = 10, 6
-os.chdir(os.path.expanduser("~/Documents/python/wabag/"))
+#os.chdir(os.path.expanduser("~/Documents/python/wabag/"))
 
 rw=.017 #radius of inner wall of cylindrical electrodes, in meters
 q_e=1.60217662e-19
