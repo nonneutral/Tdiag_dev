@@ -1,14 +1,14 @@
 # Solver for plasma of known number of electrons (NVal), temperature (T_e), and rotation frequency (fE)
-
-import os
+import time
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from scipy import special
 from pylab import rcParams
 
+start_total_time = time.time()
+
 rcParams['figure.figsize'] = 10, 6
-os.chdir(os.path.expanduser("~/Documents/python/wabag/"))
 
 rw=.017 #radius of inner wall of cylindrical electrodes, in meters
 q_e=1.60217662e-19
@@ -122,13 +122,23 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
                         continue
                     total[:,:zind]+=backward_voltage_maps[rind][:,-zind-1:-1]*charges[rind,zind]  
         return total
-    
+
     phieff=np.array([[.5*m_e*omega_r*(omega_c-omega_r)*(rbound*rind/nr)**2 
                        for zind in range(nz)] for rind in range(nr)]) 
     volume_elements=np.array([[np.pi*((rbound*(rind+.5)/nr)**2-(rbound*max(0,rind-.5)/nr)**2)
                                *(rightbound-leftbound)/nz 
                                 for zind in range(nz)] for rind in range(nr)])
-    ngrid=np.zeros((nr,nz))
+    #----Manual initial guess for ngrid - UPDATED ON 23rd Oct, 2025----
+    exponential_guess = -((-q_e * free_space_solution) + phieff) / (kb * T_e)
+    magic = 600 #Cutoff for exp calculation
+    mx_guess = np.max(exponential_guess)
+    ngrid_guess = np.zeros((nr, nz))
+    valid_cells = exponential_guess > mx_guess - magic #Apply exp only where exponent is reasonably large
+    ngrid_guess[valid_cells] = np.exp(exponential_guess[valid_cells] - mx_guess) 
+    total_particles_guess = np.sum(ngrid_guess * volume_elements) #Normalize the initial guess to match NVal
+    ngrid = ngrid_guess * (NVal / total_particles_guess) #THE NEW ngrid GUESS
+    print(f"Initial guess generated with {np.sum(ngrid * volume_elements):.2e} particles.")
+    #----End of updated initial guess; update replaced just the line: ngrid = np.zeros((nr, nz))----
     n0=2*m_e*e0*omega_r*(omega_c-omega_r)/(q_e*q_e)
     debye_length=np.sqrt((e0*kb*T_e)/(q_e*q_e*n0))
     a=rbound
@@ -257,3 +267,5 @@ ax.set_ylabel("r (mm)")
 ax.set_xlabel("z (m)")
 ax.set_zlabel("rho (N/m^3)")
 plt.show()
+end_total_time = time.time()
+print(f"\nTotal execution time: {end_total_time - start_total_time:.2f} seconds")
