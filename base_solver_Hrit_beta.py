@@ -65,7 +65,7 @@ def finiteChargeCylinder(cpl,rp,rw,length):
             )
     return getFiniteSolution([coeffs],length,inf)
 
-def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,rfact,plotting):
+def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,rfact,plotting, coarse_sol_divisor):
     nr=rpoints
     nz=zpoints
     omega_c=q_e*B/m_e
@@ -176,7 +176,7 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
                 plt.show()
             #if err<np.sum(NVal):
                 #epsilon=epsapprox*np.sum(ngrid>=np.max(ngrid)/2)/np.sum(ngrid>=-1)
-            if err<NVal/50:
+            if err<NVal/coarse_sol_divisor:
                 break
 
     NS=ngrid*volume_elements
@@ -241,18 +241,56 @@ electrode_borders=[0.025,0.050,0.100,0.125]
 Llim=0.035
 Rlim=0.100
 rampfrac=0.9
+#---ADDED VARIABLES FOR COARSE LOOP---
+B=1.6
+mur2=0.00165
+freq_guess = 1.0e5  # initial guess for rotation frequency in Hz
+omega_c = q_e*B/m_e
+omega_r  = 2*np.pi*freq_guess
+#---END OF ADDED VARIABLES FOR COARSE LOOP---
 current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages)*rampfrac
-sol1=find_solution(NVal=8.0e6,T_e=1960,fE=1.0e5,mur2=0.00165,B=1.6,
-                   electrodeConfig=(current_voltages,electrode_borders),
-                   left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True)
 
-n=sol1[0]
-voltageGuess=sol1[3]
+#---FUNCTION TO RETUNE OMEGA_R TO HIT TARGET RADIUS; STEP 4 ON SLIDES - UPDATED 25th OCT---
+def retune_omega_to_hit_radius(omega_r, omega_c, r_mean, r_target, m=m_e):
+    '''Defining effective solution as kappa and using that it scales as r^-2 with 
+       a constant T_e, we can tune omega_r to hit the target radius'''
+    kappa_current = 0.5 * m * omega_r * (omega_c - omega_r)
+    kappa_target = kappa_current * (r_mean / r_target)**2
+    disc = omega_c**2 - 8.0 * kappa_target / m
+    if disc <= 0:
+        # target not reachable with current N, Te, electrodes - worst case scenario
+        return None
+    return 0.5 * (omega_c - np.sqrt(disc))
+
+for _ in range(8):  #COARSE LOOP - range(number) is just number of iterations to try
+    sol = find_solution(NVal=8.0e6,T_e=1960,fE=omega_r/(2*np.pi),mur2=0.00165,B=1.6,
+                        electrodeConfig=(initial_voltages,electrode_borders),
+                        left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=50)
+    r_mean = sol[-1]     #returned rmean
+    vfree = sol[4]   #returned free_space_solution
+    print(f'potetnial-to-kT ratio: {np.max(-q_e*vfree)/(kb*1960):0.2f}')
+    if abs(r_mean - mur2) <= 0.10 * mur2:
+        print("Desired radius achieved within 10% tolerance.")
+        break
+    omega_new = retune_omega_to_hit_radius(omega_r, omega_c, r_mean, mur2) #using funciton to retune omega_r and hit traget radius.
+    if omega_new is None:
+        print("Target radius not reachable with current parameters.")
+        break
+    omega_r = omega_new
+
+print('Now proceeding to fine solution.') #SOLVING FOR FINE SOLUTION - STEP 6 ON SLIDES
+fine_sol=find_solution(NVal=8.0e6,T_e=1960,fE=1.0e5,mur2=0.00165,B=1.6,
+                      electrodeConfig=(initial_voltages,electrode_borders),
+                      left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=100)
+#---END OF ADDED UPDATES---
+
+n=fine_sol[0]
+voltageGuess=fine_sol[3]
 maxvolt=np.max(voltageGuess)
 minvolt=np.min(voltageGuess)
 maxN=np.max(n)
-position_map_z=sol1[1]
-position_map_r=sol1[2]
+position_map_z=fine_sol[1]
+position_map_r=fine_sol[2]
 maxr=np.max(position_map_r)
 dr=-position_map_r[0,0]+position_map_r[1,0]
 
