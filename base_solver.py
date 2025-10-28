@@ -174,6 +174,7 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
     phi=np.max(free_space_solution[0,:])-np.max(voltageGuess[0,:])
     print('N, φ, ρ, r_0, λ_D')
     print(f'{NVal:0.3e}\t{T_e:0.3e}\t{phi:0.3e}\t{n0:0.3e}\t{rmean:0.3e}\t{debye_length:0.3e}')
+    print(epsapprox)
 
     if plotting:  
         plt.figure(figsize=(6,4))
