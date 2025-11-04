@@ -277,18 +277,10 @@ current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages)*
 
 #---FUNCTION TO RETUNE OMEGA_R TO HIT TARGET RADIUS; STEP 4 ON SLIDES - UPDATED 25th OCT---
 def retune_omega_to_hit_radius(omega_r, omega_c, r_mean, r_target, m=m_e):
-    '''Defining effective solution as kappa and using that it scales as r^-2 with 
-       a constant T_e, we can tune omega_r to hit the target radius'''
-    n0=2*m_e*e0*omega_r*(omega_c-omega_r)/(q_e*q_e)
-    kappa_current = 0.5 * m * omega_r * (omega_c - omega_r)
     r_ratio_sq = (r_mean / r_target)**2
-    #kappa_target = kappa_current * r_ratio_sq
-    kappa_target = kappa_current * r_ratio_sq + (1-r_ratio_sq) * n0 * q_e / (4 * e0) #using infinite length potential 
-    disc = omega_c**2 - 8.0 * kappa_target / m #discriminant
-    if disc <= 0:
-        # target not reachable with current N, Te, electrodes - worst case scenario
-        return None
-    return 0.5 * (omega_c - np.sqrt(disc))
+    omega_r_new = r_ratio_sq * (omega_r - omega_c/(2*3e8)) + omega_c/(2*3e8)
+    return omega_r_new
+
 
 for _ in range(8):  #COARSE LOOP - range(number) is just number of iterations to try
     sol = find_solution(NVal=8.0e6,T_e=1960,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
