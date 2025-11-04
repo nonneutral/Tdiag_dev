@@ -267,10 +267,10 @@ Llim=0.035
 Rlim=0.100
 rampfrac=0.9
 #---ADDED VARIABLES FOR COARSE LOOP---
-B=1.6
-mur2=0.00165
+B2=1.6
+rad2=0.00165
 freq_guess = 1.0e5  # initial guess for rotation frequency in Hz
-omega_c = q_e*B/m_e
+omega_c = q_e*B2/m_e
 omega_r  = 2*np.pi*freq_guess
 #---END OF ADDED VARIABLES FOR COARSE LOOP---
 current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages)*rampfrac
@@ -291,23 +291,23 @@ def retune_omega_to_hit_radius(omega_r, omega_c, r_mean, r_target, m=m_e):
     return 0.5 * (omega_c - np.sqrt(disc))
 
 for _ in range(8):  #COARSE LOOP - range(number) is just number of iterations to try
-    sol = find_solution(NVal=8.0e6,T_e=1960,fE=omega_r/(2*np.pi),mur2=0.00165,B=1.6,
+    sol = find_solution(NVal=8.0e6,T_e=1960,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
                         electrodeConfig=(initial_voltages,electrode_borders),
                         left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=50)
     r_mean = sol[-1]     #returned rmean
     vfree = sol[4]   #returned free_space_solution
     print(f'potetnial-to-kT ratio: {np.max(-q_e*vfree)/(kb*1960):0.2f}')
-    if abs(r_mean - mur2) <= 0.10 * mur2:
+    if abs(r_mean - rad2) <= 0.10 * rad2:
         print("Desired radius achieved within 10% tolerance.")
         break
-    omega_new = retune_omega_to_hit_radius(omega_r, omega_c, r_mean, mur2) #using funciton to retune omega_r and hit traget radius.
+    omega_new = retune_omega_to_hit_radius(omega_r, omega_c, r_mean, rad2) #using funciton to retune omega_r and hit traget radius.
     if omega_new is None:
         print("Target radius not reachable with current parameters.")
         break
     omega_r = omega_new
 
 print('Now proceeding to fine solution.') #SOLVING FOR FINE SOLUTION - STEP 6 ON SLIDES
-fine_sol=find_solution(NVal=8.0e6,T_e=1960,fE=1.0e5,mur2=0.00165,B=1.6,
+fine_sol=find_solution(NVal=8.0e6,T_e=1960,fE=1.0e5,mur2=rad2,B=B2,
                       electrodeConfig=(initial_voltages,electrode_borders),
                       left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=100)
 #---END OF ADDED UPDATES---
