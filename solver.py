@@ -278,7 +278,7 @@ current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages)*
 #---FUNCTION TO RETUNE OMEGA_R TO HIT TARGET RADIUS; STEP 4 ON SLIDES - UPDATED 25th OCT---
 def retune_omega_to_hit_radius(omega_r, omega_c, r_mean, r_target, m=m_e):
     r_ratio_sq = (r_mean / r_target)**2
-    omega_r_new = r_ratio_sq * (omega_r - omega_c/(2*3e8)) + omega_c/(2*3e8)
+    omega_r_new = r_ratio_sq * omega_r
     return omega_r_new
 
 
