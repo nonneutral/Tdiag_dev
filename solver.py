@@ -268,8 +268,12 @@ Rlim=0.100
 rampfrac=0.9
 #---ADDED VARIABLES FOR COARSE LOOP---
 B2=1.6
-rad2=0.00165
-freq_guess = 1.0e5  # initial guess for rotation frequency in Hz
+rad2=0.0002
+freq_guess = 1.0e6  # initial guess for rotation frequency in Hz
+#EDH: generate this from NVal, rad2, and plasma length
+#: guess plasma length based on the confining potentials
+#: use the infinite length space charge formula for \phi_0, with N=NVal and r=1 mm
+#: plasma length is distance between the points on blue curve at offset = \phi_0 from the potential minimum
 omega_c = q_e*B2/m_e
 omega_r  = 2*np.pi*freq_guess
 #---END OF ADDED VARIABLES FOR COARSE LOOP---
@@ -281,15 +285,14 @@ def retune_omega_to_hit_radius(omega_r, omega_c, r_mean, r_target, m=m_e):
     omega_r_new = r_ratio_sq * omega_r
     return omega_r_new
 
-
 for _ in range(8):  #COARSE LOOP - range(number) is just number of iterations to try
     sol = find_solution(NVal=8.0e6,T_e=1960,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
                         electrodeConfig=(initial_voltages,electrode_borders),
                         left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=50)
     r_mean = sol[-1]     #returned rmean
     vfree = sol[4]   #returned free_space_solution
-    print(f'potetnial-to-kT ratio: {np.max(-q_e*vfree)/(kb*1960):0.2f}')
-    if abs(r_mean - rad2) <= 0.10 * rad2:
+    print(f'potential-to-kT ratio: {np.max(-q_e*vfree)/(kb*1960):0.2f}')
+    if abs(r_mean - rad2) <= 0.01 * rad2:
         print("Desired radius achieved within 10% tolerance.")
         break
     omega_new = retune_omega_to_hit_radius(omega_r, omega_c, r_mean, rad2) #using funciton to retune omega_r and hit traget radius.
@@ -299,9 +302,9 @@ for _ in range(8):  #COARSE LOOP - range(number) is just number of iterations to
     omega_r = omega_new
 
 print('Now proceeding to fine solution.') #SOLVING FOR FINE SOLUTION - STEP 6 ON SLIDES
-fine_sol=find_solution(NVal=8.0e6,T_e=1960,fE=1.0e5,mur2=rad2,B=B2,
+fine_sol=find_solution(NVal=8.0e6,T_e=1960,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
                       electrodeConfig=(initial_voltages,electrode_borders),
-                      left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=100)
+                      left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=1000)
 #---END OF ADDED UPDATES---
 
 n=fine_sol[0]
