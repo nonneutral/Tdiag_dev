@@ -65,7 +65,7 @@ def finiteChargeCylinder(cpl,rp,rw,length):
             )
     return getFiniteSolution([coeffs],length,inf)
 
-def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,rfact,plotting):
+def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,rfact,plotting, coarse_sol_divisor):
     nr=rpoints
     nz=zpoints
     omega_c=q_e*B/m_e
@@ -129,6 +129,7 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
                                *(rightbound-leftbound)/nz 
                                 for zind in range(nz)] for rind in range(nr)])
     #----Manual initial guess for ngrid - UPDATED ON 23rd Oct, 2025----
+    """
     exponential_guess = -((-q_e * free_space_solution) + phieff) / (kb * T_e)
     magic = 600 #Cutoff for exp calculation
     mx_guess = np.max(exponential_guess)
@@ -139,6 +140,8 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
     ngrid = ngrid_guess * (NVal / total_particles_guess) #THE NEW ngrid GUESS
     print(f"Initial guess generated with {np.sum(ngrid * volume_elements):.2e} particles.")
     #----End of updated initial guess; update replaced just the line: ngrid = np.zeros((nr, nz))----
+    """
+    ngrid = np.zeros((nr, nz))
     n0=2*m_e*e0*omega_r*(omega_c-omega_r)/(q_e*q_e)
     debye_length=np.sqrt((e0*kb*T_e)/(q_e*q_e*n0))
     a=rbound
@@ -148,14 +151,36 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
     epsapprox=1/(2-lambdac)
     epsilon=epsapprox
     magic=60
+
     
+    #find initial region of interest based on electrode borders
+    roi_init = position_map_z[0,:] >= electrode_borders[1]
+    roi_init &= position_map_z[0,:] <= electrode_borders[-2]
+
     for i in range(np.int64(1e6)):
         voltageGuess=np.copy(free_space_solution)
         voltageGuess+=get_voltage_from_charge_distr(q_e*ngrid)
         exponential=-(voltageGuess*(-q_e)+phieff)/(kb*T_e)
+        
+        #roi calculation 
+        exponential_roi_init = exponential[0,roi_init]
+        mx_exp_z = position_map_z[0,roi_init][np.argmax(exponential_roi_init)]
+        mx_exp = np.max(exponential_roi_init)
+        roi_left_ind = np.argmin(exponential[0,:][position_map_z[0,:] < mx_exp_z])
+        roi_left = position_map_z[0,position_map_z[0,:] < mx_exp_z][roi_left_ind]
+        roi_right_ind = np.argmin(exponential[0,:][position_map_z[0,:] > mx_exp_z])
+        roi_right = position_map_z[0,position_map_z[0,:] > mx_exp_z][roi_right_ind]
+
+        
         mx=np.max(exponential)
         nnew=np.zeros((nr,nz))
-        nnew[exponential>mx-magic]=np.exp(exponential-mx)[exponential>mx-magic]
+        #nnew[exponential>mx-magic]=np.exp(exponential-mx)[exponential>mx-magic]
+        nnew=np.exp(exponential-mx)
+
+        nnew[position_map_z<roi_left]=0
+        nnew[position_map_z>roi_right]=0
+
+
         total=np.sum(nnew*volume_elements)
         nnew*=NVal/total
         ngrid=ngrid*(1-epsilon)+epsilon*nnew
@@ -176,7 +201,7 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
                 plt.show()
             #if err<np.sum(NVal):
                 #epsilon=epsapprox*np.sum(ngrid>=np.max(ngrid)/2)/np.sum(ngrid>=-1)
-            if err<NVal/50:
+            if err<NVal/coarse_sol_divisor:
                 break
 
     NS=ngrid*volume_elements
@@ -241,20 +266,106 @@ electrode_borders=[0.025,0.050,0.100,0.125]
 Llim=0.035
 Rlim=0.100
 rampfrac=0.9
+#---ADDED VARIABLES FOR COARSE LOOP---
+B2=1.6
+rad2=0.0002
+freq_guess = 1.0e6  # initial guess for rotation frequency in Hz
+#EDH: generate this from NVal, rad2, and plasma length
+#: guess plasma length based on the confining potentials
+#: use the infinite length space charge formula for \phi_0, with N=NVal and r=1 mm
+#: plasma length is distance between the points on blue curve at offset = \phi_0 from the potential minimum
+omega_c = q_e*B2/m_e
+omega_r  = 2*np.pi*freq_guess
+#---END OF ADDED VARIABLES FOR COARSE LOOP---
 current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages)*rampfrac
-sol1=find_solution(NVal=8.0e6,T_e=1960,fE=1.0e5,mur2=0.00165,B=1.6,
-                   electrodeConfig=(current_voltages,electrode_borders),
-                   left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True)
 
-n=sol1[0]
-voltageGuess=sol1[3]
+#---FUNCTION TO RETUNE OMEGA_R TO HIT TARGET RADIUS; STEP 4 ON SLIDES - UPDATED 25th OCT---
+def retune_omega_to_hit_radius(omega_r, omega_c, r_mean, r_target, m=m_e):
+    r_ratio_sq = (r_mean / r_target)**2
+    omega_r_new = r_ratio_sq * omega_r
+    return omega_r_new
+
+for _ in range(8):  #COARSE LOOP - range(number) is just number of iterations to try
+    sol = find_solution(NVal=8.0e6,T_e=1960,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
+                        electrodeConfig=(initial_voltages,electrode_borders),
+                        left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=50)
+    r_mean = sol[-1]     #returned rmean
+    vfree = sol[4]   #returned free_space_solution
+    print(f'potential-to-kT ratio: {np.max(-q_e*vfree)/(kb*1960):0.2f}')
+    if abs(r_mean - rad2) <= 0.01 * rad2:
+        print("Desired radius achieved within 10% tolerance.")
+        break
+    omega_new = retune_omega_to_hit_radius(omega_r, omega_c, r_mean, rad2) #using funciton to retune omega_r and hit traget radius.
+    if omega_new is None:
+        print("Target radius not reachable with current parameters.")
+        break
+    omega_r = omega_new
+
+#Unpacking coarse solution to get factors to adjust intial excitations - STEP 5 ON SLIDES
+n=sol[0]
+voltageGuess=sol[3]
+vfree=sol[4]
 maxvolt=np.max(voltageGuess)
 minvolt=np.min(voltageGuess)
 maxN=np.max(n)
-position_map_z=sol1[1]
-position_map_r=sol1[2]
+position_map_z=sol[1]
+position_map_r=sol[2]
 maxr=np.max(position_map_r)
 dr=-position_map_r[0,0]+position_map_r[1,0]
+
+z_axis = position_map_z[0, :]
+vfree_on = vfree[0, :]
+v_sc_on = voltageGuess[0, :]
+
+# 1) Index where free-space potential peaks (on-axis)
+peak_idx = int(np.argmax(vfree_on))
+peak_z = float(z_axis[peak_idx])
+vfree_peak = float(vfree_on[peak_idx])
+
+# 2) Space-charge-corrected potential at that (on-axis) index
+Peak_Space_Charge_Pot = float(voltageGuess[0, peak_idx])
+
+# 3) Space-charge-corrected potential at electrode border (on-axis)
+idx_elec   = int(np.argmin(np.abs(z_axis - 0.050)))
+z_nearest  = float(z_axis[idx_elec])
+v_sc_near  = float(v_sc_on[idx_elec])
+
+print("\n--- Peak / Left Electrode Potentials (on-axis) ---")
+print(f"Free-space peak index (on-axis): {peak_idx}")
+print(f"z at free-space peak: {peak_z:.6f} m")
+print(f"Free-space potential at peak: {vfree_peak:.6f} V")
+print(f"Space-charge corrected potential at peak index: {Peak_Space_Charge_Pot:.6f} V")
+print(f"Nearest grid index: {idx_elec}")
+print(f"Nearest grid z: {z_nearest:.6f} m")
+print(f"Space-charge potential (nearest cell): {v_sc_near:.6f} V")
+
+#Adjust initial_voltages so that potential drop ≈ 10 kT/e
+thermal_voltage = 10 * kb * 1960 / q_e # 1960 is the current T_e
+current_drop = Peak_Space_Charge_Pot - v_sc_near
+scaling_factor = thermal_voltage / current_drop
+
+#Only scale non-zero voltages (ground stays at 0)
+print(f"\n[Voltage Adjustment] Scaling factor = {scaling_factor:.3f}")
+initial_voltages = initial_voltages * scaling_factor
+print(f"Adjusted initial voltages (V): {initial_voltages}")
+
+print('Now proceeding to fine solution.') #SOLVING FOR FINE SOLUTION - STEP 6 ON SLIDES
+fine_sol=find_solution(NVal=8.0e6,T_e=1960,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
+                      electrodeConfig=(initial_voltages,electrode_borders),
+                      left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=100)
+
+n=fine_sol[0]
+voltageGuess=fine_sol[3]
+vfree=fine_sol[4]
+maxvolt=np.max(voltageGuess)
+minvolt=np.min(voltageGuess)
+maxN=np.max(n)
+position_map_z=fine_sol[1]
+position_map_r=fine_sol[2]
+maxr=np.max(position_map_r)
+dr=-position_map_r[0,0]+position_map_r[1,0]
+
+#---END OF ADDED UPDATES---
 
 fig = plt.figure(figsize=(12, 8))
 ax = fig.add_subplot(111, projection='3d') 
