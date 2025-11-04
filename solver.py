@@ -301,14 +301,62 @@ for _ in range(8):  #COARSE LOOP - range(number) is just number of iterations to
         break
     omega_r = omega_new
 
+#Unpacking coarse solution to get factors to adjust intial excitations - STEP 5 ON SLIDES
+n=sol[0]
+voltageGuess=sol[3]
+vfree=sol[4]
+maxvolt=np.max(voltageGuess)
+minvolt=np.min(voltageGuess)
+maxN=np.max(n)
+position_map_z=sol[1]
+position_map_r=sol[2]
+maxr=np.max(position_map_r)
+dr=-position_map_r[0,0]+position_map_r[1,0]
+
+z_axis = position_map_z[0, :]
+vfree_on = vfree[0, :]
+v_sc_on = voltageGuess[0, :]
+
+# 1) Index where free-space potential peaks (on-axis)
+peak_idx = int(np.argmax(vfree_on))
+peak_z = float(z_axis[peak_idx])
+vfree_peak = float(vfree_on[peak_idx])
+
+# 2) Space-charge-corrected potential at that (on-axis) index
+Peak_Space_Charge_Pot = float(voltageGuess[0, peak_idx])
+
+# 3) Space-charge-corrected potential at electrode border (on-axis)
+idx_elec   = int(np.argmin(np.abs(z_axis - 0.050)))
+z_nearest  = float(z_axis[idx_elec])
+v_sc_near  = float(v_sc_on[idx_elec])
+
+print("\n--- Peak / Left Electrode Potentials (on-axis) ---")
+print(f"Free-space peak index (on-axis): {peak_idx}")
+print(f"z at free-space peak: {peak_z:.6f} m")
+print(f"Free-space potential at peak: {vfree_peak:.6f} V")
+print(f"Space-charge corrected potential at peak index: {Peak_Space_Charge_Pot:.6f} V")
+print(f"Nearest grid index: {idx_elec}")
+print(f"Nearest grid z: {z_nearest:.6f} m")
+print(f"Space-charge potential (nearest cell): {v_sc_near:.6f} V")
+
+#Adjust initial_voltages so that potential drop ≈ 10 kT/e
+thermal_voltage = 10 * kb * 1960 / q_e # 1960 is the current T_e
+current_drop = Peak_Space_Charge_Pot - v_sc_near
+scaling_factor = thermal_voltage / current_drop
+
+#Only scale non-zero voltages (ground stays at 0)
+print(f"\n[Voltage Adjustment] Scaling factor = {scaling_factor:.3f}")
+initial_voltages = initial_voltages * scaling_factor
+print(f"Adjusted initial voltages (V): {initial_voltages}")
+
 print('Now proceeding to fine solution.') #SOLVING FOR FINE SOLUTION - STEP 6 ON SLIDES
 fine_sol=find_solution(NVal=8.0e6,T_e=1960,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
                       electrodeConfig=(initial_voltages,electrode_borders),
-                      left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=1000)
-#---END OF ADDED UPDATES---
+                      left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=100)
 
 n=fine_sol[0]
 voltageGuess=fine_sol[3]
+vfree=fine_sol[4]
 maxvolt=np.max(voltageGuess)
 minvolt=np.min(voltageGuess)
 maxN=np.max(n)
@@ -316,6 +364,8 @@ position_map_z=fine_sol[1]
 position_map_r=fine_sol[2]
 maxr=np.max(position_map_r)
 dr=-position_map_r[0,0]+position_map_r[1,0]
+
+#---END OF ADDED UPDATES---
 
 fig = plt.figure(figsize=(12, 8))
 ax = fig.add_subplot(111, projection='3d') 
