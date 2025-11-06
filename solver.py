@@ -65,7 +65,29 @@ def finiteChargeCylinder(cpl,rp,rw,length):
             )
     return getFiniteSolution([coeffs],length,inf)
 
-def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,rfact,plotting, coarse_sol_divisor):
+def plasma_length_guess(NVal,mur2,rw,q_e,position_map_z,free_space_solution,electrode_borders):
+    potl_barrier = free_space_solution[0,:].copy()
+    electrode_centre = np.average(electrode_borders)
+    inElectrode = (electrode_borders[1] < position_map_z[0])&(position_map_z[0] < electrode_borders[-2]) 
+    rp = mur2
+    rw = rw
+    cpl = NVal/(electrode_borders[2]-electrode_borders[1])
+    potl_inf = (cpl*(-q_e)/(4*np.pi*e0))*(2**np.log(rw/rp)+1)
+    potl_inf = potl_inf - np.min(np.abs(potl_barrier[inElectrode])) 
+    print(np.min(np.abs(potl_barrier[inElectrode])))
+    # need to make this more general (- sign must be removed) not dependent on charge sign
+    potl_diff = np.abs(potl_inf - potl_barrier)
+    plasma_left_end = position_map_z[0,np.argmin(potl_diff[position_map_z[0]<electrode_centre])]
+    plasma_right_end = position_map_z[0,np.argmin(potl_diff[position_map_z[0]>electrode_centre])]+ electrode_centre
+    plasma_length =  plasma_right_end - plasma_left_end
+    
+    plt.plot(position_map_z[0,:], potl_barrier, label='On-axis potential')
+    plt.plot(position_map_z[0,:], np.full(len(position_map_z[0,:]), potl_inf), label='Infinite-length space charge potential')
+    plt.show()
+
+    return [plasma_left_end, plasma_right_end, plasma_length]
+
+def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,rfact,plotting, coarse_sol_divisor, WantToInitializeWithPlasmaLength = False):
     nr=rpoints
     nz=zpoints
     omega_c=q_e*B/m_e
@@ -123,6 +145,21 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
                     total[:,:zind]+=backward_voltage_maps[rind][:,-zind-1:-1]*charges[rind,zind]  
         return total
 
+    # initial omega_r calculation based on initial guess plasma length, NVal, and mur2 - 5th Nov, 2025
+    # plasma length based initialisation 
+    lp_init_config = np.array([0.0, 0.0, 0.0])
+    lp_init = 0
+    
+    if WantToInitializeWithPlasmaLength == True:
+        lp_init_config = np.array(plasma_length_guess(NVal, mur2, rw, q_e, position_map_z, free_space_solution, electrode_borders))
+        lp_init = lp_init_config[2]
+        print(f'Initial plasma length estimate: {lp_init_config[2]:0.3e} m (from {lp_init_config[0]:0.3e} m to {lp_init_config[1]:0.3e} m)')
+        #guesses omega_r based on the initial plasma length given
+        quad_eq_c = (NVal*q_e**2)/(np.pi*lp_init*mur2*mur2*(2*m_e*e0))
+        omega_r = 0.5*(omega_c-np.sqrt(omega_c*omega_c-4*quad_eq_c))
+
+    print(f'Initial omega_r estimate = {omega_r}')
+
     phieff=np.array([[.5*m_e*omega_r*(omega_c-omega_r)*(rbound*rind/nr)**2 
                        for zind in range(nz)] for rind in range(nr)]) 
     volume_elements=np.array([[np.pi*((rbound*(rind+.5)/nr)**2-(rbound*max(0,rind-.5)/nr)**2)
@@ -170,7 +207,7 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
         roi_left = position_map_z[0,position_map_z[0,:] < mx_exp_z][roi_left_ind]
         roi_right_ind = np.argmin(exponential[0,:][position_map_z[0,:] > mx_exp_z])
         roi_right = position_map_z[0,position_map_z[0,:] > mx_exp_z][roi_right_ind]
-
+        plasma_length = roi_right - roi_left #plasma length estimate from current iteration
         
         mx=np.max(exponential)
         nnew=np.zeros((nr,nz))
@@ -207,8 +244,8 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
     NS=ngrid*volume_elements
     rmean=np.sqrt(np.sum(mursq*NS)/(np.sum(NS)))*rbound/nr
     phi=np.max(free_space_solution[0,:])-np.max(voltageGuess[0,:])
-    print('N, φ, ρ, r_0, λ_D')
-    print(f'{NVal:0.3e}\t{T_e:0.3e}\t{phi:0.3e}\t{n0:0.3e}\t{rmean:0.3e}\t{debye_length:0.3e}')
+    print('N, φ, ρ, r_0, λ_D, l_p')
+    print(f'{NVal:0.3e}\t{T_e:0.3e}\t{phi:0.3e}\t{n0:0.3e}\t{rmean:0.3e}\t{debye_length:0.3e} \t{plasma_length:0.3e}')
 
     if plotting:  
         plt.figure(figsize=(6,4))
@@ -222,8 +259,7 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
         plt.title("potential")
         plt.colorbar()
         plt.show()
-
-    return ngrid,position_map_z,position_map_r,voltageGuess,free_space_solution,rmean
+    return ngrid,position_map_z,position_map_r,voltageGuess,free_space_solution,rmean,omega_r
 
 """
 Main function call
@@ -260,6 +296,8 @@ voltageGuess: the potential of each grid point (a matrix)
 free_space_solution: the potential of each point in the absence of charge (a matrix)
 rmean: average radius
 """
+
+# Initial Input Values!!!
 initial_voltages=np.array([0,-50,-10,-50,0])
 final_voltages=np.array([0,-15,-10,-50,0])
 electrode_borders=[0.025,0.050,0.100,0.125]
@@ -274,28 +312,32 @@ freq_guess = 1.0e6  # initial guess for rotation frequency in Hz
 #: guess plasma length based on the confining potentials
 #: use the infinite length space charge formula for \phi_0, with N=NVal and r=1 mm
 #: plasma length is distance between the points on blue curve at offset = \phi_0 from the potential minimum
-omega_c = q_e*B2/m_e
 omega_r  = 2*np.pi*freq_guess
 #---END OF ADDED VARIABLES FOR COARSE LOOP---
 current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages)*rampfrac
 
 #---FUNCTION TO RETUNE OMEGA_R TO HIT TARGET RADIUS; STEP 4 ON SLIDES - UPDATED 25th OCT---
-def retune_omega_to_hit_radius(omega_r, omega_c, r_mean, r_target, m=m_e):
+def retune_omega_to_hit_radius(omega_r, r_mean, r_target):
     r_ratio_sq = (r_mean / r_target)**2
     omega_r_new = r_ratio_sq * omega_r
     return omega_r_new
 
 for _ in range(8):  #COARSE LOOP - range(number) is just number of iterations to try
+    if _ == 0:
+        initialse_using_pl = True
+    else: 
+        initialse_using_pl = False
     sol = find_solution(NVal=8.0e6,T_e=1960,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
                         electrodeConfig=(initial_voltages,electrode_borders),
-                        left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=50)
-    r_mean = sol[-1]     #returned rmean
+                        left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=50, WantToInitializeWithPlasmaLength = initialse_using_pl)
+    omega_r = sol[6]
+    r_mean = sol[5]     #returned rmean
     vfree = sol[4]   #returned free_space_solution
     print(f'potential-to-kT ratio: {np.max(-q_e*vfree)/(kb*1960):0.2f}')
     if abs(r_mean - rad2) <= 0.01 * rad2:
         print("Desired radius achieved within 10% tolerance.")
         break
-    omega_new = retune_omega_to_hit_radius(omega_r, omega_c, r_mean, rad2) #using funciton to retune omega_r and hit traget radius.
+    omega_new = retune_omega_to_hit_radius(omega_r, r_mean, rad2) #using funciton to retune omega_r and hit traget radius.
     if omega_new is None:
         print("Target radius not reachable with current parameters.")
         break
@@ -326,7 +368,7 @@ vfree_peak = float(vfree_on[peak_idx])
 Peak_Space_Charge_Pot = float(voltageGuess[0, peak_idx])
 
 # 3) Space-charge-corrected potential at electrode border (on-axis)
-idx_elec   = int(np.argmin(np.abs(z_axis - 0.050)))
+idx_elec   = int(np.argmin(np.abs(z_axis - electrode_borders[1]))) 
 z_nearest  = float(z_axis[idx_elec])
 v_sc_near  = float(v_sc_on[idx_elec])
 
@@ -349,10 +391,10 @@ print(f"\n[Voltage Adjustment] Scaling factor = {scaling_factor:.3f}")
 initial_voltages = initial_voltages * scaling_factor
 print(f"Adjusted initial voltages (V): {initial_voltages}")
 
-print('Now proceeding to fine solution.') #SOLVING FOR FINE SOLUTION - STEP 6 ON SLIDES
+print('Now proceeding to fine solution where the potential drops to 10kT/e.') #SOLVING FOR FINE SOLUTION - STEP 6 ON SLIDES
 fine_sol=find_solution(NVal=8.0e6,T_e=1960,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
                       electrodeConfig=(initial_voltages,electrode_borders),
-                      left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=100)
+                      left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=100, WantToInitializeWithPlasmaLength=False)
 
 n=fine_sol[0]
 voltageGuess=fine_sol[3]
