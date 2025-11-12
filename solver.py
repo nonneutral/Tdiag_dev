@@ -244,7 +244,7 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
     NS=ngrid*volume_elements
     rmean=np.sqrt(np.sum(mursq*NS)/(np.sum(NS)))*rbound/nr
     phi=np.max(free_space_solution[0,:])-np.max(voltageGuess[0,:])
-    print('N, φ, ρ, r_0, λ_D, l_p')
+    print('N, T, φ, ρ, r_0, λ_D, l_p')
     print(f'{NVal:0.3e}\t{T_e:0.3e}\t{phi:0.3e}\t{n0:0.3e}\t{rmean:0.3e}\t{debye_length:0.3e} \t{plasma_length:0.3e}')
 
     if plotting:  
