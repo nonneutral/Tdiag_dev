@@ -11,10 +11,12 @@ start_total_time = time.time()
 rcParams['figure.figsize'] = 10, 6
 
 rw=.017 #radius of inner wall of cylindrical electrodes, in meters
-q_e=1.60217662e-19
-m_e=9.1093837e-31
-kb=1.38064852e-23
-e0=8.854187817e-12#farads per meter
+q_e=1.60217662e-19 #elementary charge in coulombs
+m_e=9.1093837e-31 #electron mass in kilograms
+kb=1.38064852e-23 #Boltzmann's constant in joules per kelvin
+e0=8.854187817e-12 #farads per meter
+T_e=1960 #plasma temperature in kelvin
+#also add radius etc.
 Mmax=1
 Nmax=20000
 zeros=[special.jn_zeros(m,Nmax) for m in range(Mmax)]
