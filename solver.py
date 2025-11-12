@@ -424,3 +424,25 @@ ax.set_zlabel("rho (N/m^3)")
 plt.show()
 end_total_time = time.time()
 print(f"\nTotal execution time: {end_total_time - start_total_time:.2f} seconds")
+
+
+
+
+#steps to find the '10 e- escaping' condition
+#1  since e- escape from the center of the plasma first, 
+#   open the well until e- at r=0 would escape if they have 10kT or more of energy
+#2  with those potentials, calculate how many e- actually escape
+relative_density=sol[0]
+relative_density=relative_density/np.sum(relative_density) #normalize it
+sums=np.zeros(len(relative_density))
+for r,x in enumerate(relative_density): #pick ngrid from sol
+    full_solution = sol[3] #so-called voltageGuess
+    oneD_solution = full_solution[r,:]
+    escapeE = abs(oneD_solution[middle-of-plasma] - oneD_solution[barrier]) #find z indices at middle and barrier first
+    E_int = integrate(MaxwellBoltzmann(E), from=escapeE, to=Infinity)
+    sums[r] = E_int*np.sum(relative_density[r,:])
+e-escaped = np.sum(sums)
+    
+    
+    
+    
