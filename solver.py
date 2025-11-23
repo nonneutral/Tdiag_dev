@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 from scipy import special
 from pylab import rcParams
+from scipy.special import erfc #import error function
 
 start_total_time = time.time()
 
@@ -384,7 +385,7 @@ print(f"Nearest grid z: {z_nearest:.6f} m")
 print(f"Space-charge potential (nearest cell): {v_sc_near:.6f} V")
 
 #Adjust initial_voltages so that potential drop ≈ 10 kT/e
-thermal_voltage = 10 * kb * 1960 / q_e # 1960 is the current T_e
+thermal_voltage = 10 * kb * T_e / q_e # 1960 is the current T_e
 current_drop = Peak_Space_Charge_Pot - v_sc_near
 scaling_factor = thermal_voltage / current_drop
 
@@ -425,24 +426,97 @@ plt.show()
 end_total_time = time.time()
 print(f"\nTotal execution time: {end_total_time - start_total_time:.2f} seconds")
 
-
+print(n)
 
 
 #steps to find the '10 e- escaping' condition
 #1  since e- escape from the center of the plasma first, 
 #   open the well until e- at r=0 would escape if they have 10kT or more of energy
 #2  with those potentials, calculate how many e- actually escape
-relative_density=sol[0]
-relative_density=relative_density/np.sum(relative_density) #normalize it
-sums=np.zeros(len(relative_density))
-for r,x in enumerate(relative_density): #pick ngrid from sol
-    full_solution = sol[3] #so-called voltageGuess
-    oneD_solution = full_solution[r,:]
-    escapeE = abs(oneD_solution[middle-of-plasma] - oneD_solution[barrier]) #find z indices at middle and barrier first
-    E_int = integrate(MaxwellBoltzmann(E), from=escapeE, to=Infinity)
-    sums[r] = E_int*np.sum(relative_density[r,:])
-e-escaped = np.sum(sums)
+#relative_density=sol[0]
+#relative_density=relative_density/np.sum(relative_density) #normalize it
+#sums=np.array(len(relative_density))
+#for r,x in enumerate(relative_density): #pick ngrid from sol
+#    full_solution = sol[3] #so-called voltageGuess
+#    oneD_solution = full_solution[r,:]
+#    escapeE = abs(oneD_solution[middle-of-plasma] - oneD_solution[barrier]) #find z indices at middle and barrier first
+#   E_int = integrate(MaxwellBoltzmann(E), from=escapeE, to=Infinity)
+#    sums[r] = E_int*np.sum(relative_density[r,:])
+#e-escaped = np.sum(sums)
     
+def compute_escape_fraction(fine_sol, NVal, T_e, electrode_borders):
+    ngrid = fine_sol[0]
+    full_scc_solution = fine_sol[3] #Full Space-Charge-Corrected (SCC) Solution, i.e. voltageGuess
+    position_map_z = fine_sol[1]
+    volume_elements = fine_sol[7]
+    ngrid_norm = ngrid / np.sum(ngrid) #normalise it
+    #Finding centre of plasma based on weighted mean desnity along the z-axis
+    n_z = (ngrid * volume_elements).sum(axis=0) #density summed along z-axis per radial point
+    z_axis = position_map_z[0, :]
+    z_centre = (z_axis * n_z).sum() / n_z.sum() #weighted mean position
+    centre_idx = int(np.argmin(np.abs(z_axis - z_centre))) #finding the closest index to the weighted mean position
+    barrier_idx = int(np.argmin(np.abs(z_axis - electrode_borders[2]))) # Find barrier (use electrode_borders[2])
+    escaped_sum = np.zeros(len(ngrid_norm))
+    for r, x in enumerate(ngrid_norm): #pick ngrid from fine_sol
+        oneD_solution = full_scc_solution[r, :] #Solution across z-axis per radial point, r
+        escapeE = q_e * abs(oneD_solution[centre_idx] - oneD_solution[barrier_idx])
+        E_int = erfc(np.sqrt(escapeE / (kb * T_e)))
+        escaped_sum[r] = E_int * np.sum(ngrid_norm[r, :])
+        
+    return np.sum(escaped_sum)
     
+####----ESCAPE CURVE LOOP: Now want to make an escape curve for all rampfracs----####   
+ramp_values = np.linspace(0, 1, 40)
+escaped_total_list = []
+remaining_list = []
+N_remaining = NVal  #start with full plasma
+
+for rampfrac in ramp_values:
+    print(f"\n--- Rampfrac = {rampfrac:.3f} ---")
+    print(f"Electrons entering this step: {N_remaining:.3e}")
+
+    #compute new electrode voltages for this ramp step
+    current_voltages = initial_voltages + (final_voltages - initial_voltages) * rampfrac
+
+    # solve plasma for CURRENT number of particles
+    fine_sol = find_solution(
+        NVal=N_remaining, T_e=1960, fE=omega_r/(2*np.pi),
+        mur2=rad2, B=B2,
+        electrodeConfig=(current_voltages, electrode_borders),
+        left=Llim, right=Rlim,
+        zpoints=40, rpoints=20,
+        rfact=3.0, plotting=False,
+        coarse_sol_divisor=100,
+        WantToInitializeWithPlasmaLength=False
+    )
+
+    # compute escape FRACTION for this rampfrac
+    escaped_fraction = compute_escape_fraction(fine_sol, N_remaining, T_e, electrode_borders)
+
+    N_escaped = escaped_fraction * N_remaining #how many left
+    N_remaining = N_remaining - N_escaped #how many remain - need this update to ensure continuity in ramping
+
+    print(f"Escaped this step: {N_escaped:.3e}")
+    print(f"Remaining after step: {N_remaining:.3e}")
+
+    escaped_total_list.append(N_escaped)
+    remaining_list.append(N_remaining)
+
+    # if almost empty, break - just a check
+    if N_remaining < 1:
+        print("Plasma fully escaped — stopping early.")
+        break
+
+#PLot the escape curve
+plt.figure(figsize=(7,5))
+plt.plot(ramp_values[:len(remaining_list)], remaining_list, '-o', label="Remaining electrons")
+plt.plot(ramp_values[:len(escaped_total_list)], escaped_total_list, '-o', label="Escaped per step")
+plt.xlabel("Ramp fraction (0 = strong confinement, 1 = weak)")
+plt.ylabel("Electrons")
+plt.title("Plasma escape during ramp-down")
+plt.grid(True)
+plt.legend()
+plt.show()
+####----END OF UPDATES----####    
     
     
