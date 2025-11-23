@@ -444,26 +444,24 @@ print(n)
 #    sums[r] = E_int*np.sum(relative_density[r,:])
 #e-escaped = np.sum(sums)
     
-def compute_escape_fraction(fine_sol, NVal, T_e, electrode_borders):
+def compute_escape_fraction(fine_sol, T_e):
     ngrid = fine_sol[0]
     full_scc_solution = fine_sol[3] #Full Space-Charge-Corrected (SCC) Solution, i.e. voltageGuess
     position_map_z = fine_sol[1]
     volume_elements = fine_sol[7]
-    ngrid_norm = ngrid / np.sum(ngrid) #normalise it
-    #Finding centre of plasma based on weighted mean desnity along the z-axis
-    n_z = (ngrid * volume_elements).sum(axis=0) #density summed along z-axis per radial point
-    z_axis = position_map_z[0, :]
-    z_centre = (z_axis * n_z).sum() / n_z.sum() #weighted mean position
-    centre_idx = int(np.argmin(np.abs(z_axis - z_centre))) #finding the closest index to the weighted mean position
-    barrier_idx = int(np.argmin(np.abs(z_axis - electrode_borders[2]))) # Find barrier (use electrode_borders[2])
+    N_cell = ngrid * volume_elements
+    total_e = np.sum(N_cell)
+    ngrid_norm = N_cell / total_e #normalise it
     escaped_sum = np.zeros(len(ngrid_norm))
     for r, x in enumerate(ngrid_norm): #pick ngrid from fine_sol
         oneD_solution = full_scc_solution[r, :] #Solution across z-axis per radial point, r
-        escapeE = q_e * abs(oneD_solution[centre_idx] - oneD_solution[barrier_idx])
+        axial_well_idx = np.argmin(oneD_solution)
+        barrier_idx = np.argmax(oneD_solution)
+        escapeE = q_e * abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
         E_int = erfc(np.sqrt(escapeE / (kb * T_e)))
-        escaped_sum[r] = E_int * np.sum(ngrid_norm[r, :])
+        escaped_sum[r] = E_int * np.sum(N_cell[r, :])
         
-    return np.sum(escaped_sum)
+    return np.sum(escaped_sum) / total_e
     
 ####----ESCAPE CURVE LOOP: Now want to make an escape curve for all rampfracs----####   
 ramp_values = np.linspace(0, 1, 40)
@@ -491,7 +489,7 @@ for rampfrac in ramp_values:
     )
 
     # compute escape FRACTION for this rampfrac
-    escaped_fraction = compute_escape_fraction(fine_sol, N_remaining, T_e, electrode_borders)
+    escaped_fraction = compute_escape_fraction(fine_sol, T_e)
 
     N_escaped = escaped_fraction * N_remaining #how many left
     N_remaining = N_remaining - N_escaped #how many remain - need this update to ensure continuity in ramping
@@ -517,6 +515,5 @@ plt.title("Plasma escape during ramp-down")
 plt.grid(True)
 plt.legend()
 plt.show()
-####----END OF UPDATES----####    
-    
+####----END OF UPDATES----####
     
