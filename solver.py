@@ -479,7 +479,7 @@ for rampfrac in ramp_values:
     )
 
     # compute amount of e- that escaped between this rampfrac and the last
-    N_escaped = compute_escape(fine_sol, T_e)
+    N_escaped = compute_escape(fine_sol, T_e) #!!! change this for 'keep' algorithm explained at line 448
     N_remaining = N_remaining - N_escaped #how many remain - need this update to ensure continuity in ramping
 
     print(f"Escaped this step: {N_escaped:.3e}")
