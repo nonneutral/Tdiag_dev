@@ -17,7 +17,10 @@ m_e=9.1093837e-31 #electron mass in kilograms
 kb=1.38064852e-23 #Boltzmann's constant in joules per kelvin
 e0=8.854187817e-12 #farads per meter
 T_e=1960 #plasma temperature in kelvin
-#also add radius etc.
+N_e=8e6 #number of electrons
+rad2=0.0002 #plasma radius in meters
+B2=1.6 #magnetic field in tesla
+
 Mmax=1
 Nmax=20000
 zeros=[special.jn_zeros(m,Nmax) for m in range(Mmax)]
@@ -159,7 +162,7 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
         print(f'Initial plasma length estimate: {lp_init_config[2]:0.3e} m (from {lp_init_config[0]:0.3e} m to {lp_init_config[1]:0.3e} m)')
         #guesses omega_r based on the initial plasma length given
         quad_eq_c = (NVal*q_e**2)/(np.pi*lp_init*mur2*mur2*(2*m_e*e0))
-        omega_r = 0.5*(omega_c-np.sqrt(omega_c*omega_c-4*quad_eq_c))
+        omega_r = (omega_c-np.sqrt(omega_c*omega_c-4*quad_eq_c))
 
     print(f'Initial omega_r estimate = {omega_r}')
 
@@ -190,7 +193,7 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
     #print('what is lambda c',lambdac)
     epsapprox=1/(2-lambdac)
     epsilon=epsapprox
-    magic=60
+    #magic=60
 
     
     #find initial region of interest based on electrode borders
@@ -205,7 +208,7 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
         #roi calculation 
         exponential_roi_init = exponential[0,roi_init]
         mx_exp_z = position_map_z[0,roi_init][np.argmax(exponential_roi_init)]
-        mx_exp = np.max(exponential_roi_init)
+        #mx_exp = np.max(exponential_roi_init)
         roi_left_ind = np.argmin(exponential[0,:][position_map_z[0,:] < mx_exp_z])
         roi_left = position_map_z[0,position_map_z[0,:] < mx_exp_z][roi_left_ind]
         roi_right_ind = np.argmin(exponential[0,:][position_map_z[0,:] > mx_exp_z])
@@ -262,7 +265,7 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
         plt.title("potential")
         plt.colorbar()
         plt.show()
-    return ngrid,position_map_z,position_map_r,voltageGuess,free_space_solution,rmean,omega_r
+    return ngrid,position_map_z,position_map_r,voltageGuess,free_space_solution,rmean,omega_r,volume_elements
 
 """
 Main function call
@@ -305,12 +308,10 @@ initial_voltages=np.array([0,-50,-10,-50,0])
 final_voltages=np.array([0,-15,-10,-50,0])
 electrode_borders=[0.025,0.050,0.100,0.125]
 Llim=0.035
-Rlim=0.100
+Rlim=0.110
 rampfrac=0.9
 #---ADDED VARIABLES FOR COARSE LOOP---
-B2=1.6
-rad2=0.0002
-freq_guess = 1.0e6  # initial guess for rotation frequency in Hz
+freq_guess = 2.0e6  # initial guess for rotation frequency in Hz
 #EDH: generate this from NVal, rad2, and plasma length
 #: guess plasma length based on the confining potentials
 #: use the infinite length space charge formula for \phi_0, with N=NVal and r=1 mm
@@ -330,7 +331,7 @@ for _ in range(8):  #COARSE LOOP - range(number) is just number of iterations to
         initialse_using_pl = True
     else: 
         initialse_using_pl = False
-    sol = find_solution(NVal=8.0e6,T_e=1960,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
+    sol = find_solution(NVal=N_e,T_e=T_e,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
                         electrodeConfig=(initial_voltages,electrode_borders),
                         left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=50, WantToInitializeWithPlasmaLength = initialse_using_pl)
     omega_r = sol[6]
@@ -395,7 +396,7 @@ initial_voltages = initial_voltages * scaling_factor
 print(f"Adjusted initial voltages (V): {initial_voltages}")
 
 print('Now proceeding to fine solution where the potential drops to 10kT/e.') #SOLVING FOR FINE SOLUTION - STEP 6 ON SLIDES
-fine_sol=find_solution(NVal=8.0e6,T_e=1960,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
+fine_sol=find_solution(NVal=N_e,T_e=T_e,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
                       electrodeConfig=(initial_voltages,electrode_borders),
                       left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=100, WantToInitializeWithPlasmaLength=False)
 
@@ -447,7 +448,7 @@ print(n)
 def compute_escape_fraction(fine_sol, T_e):
     ngrid = fine_sol[0]
     full_scc_solution = fine_sol[3] #Full Space-Charge-Corrected (SCC) Solution, i.e. voltageGuess
-    position_map_z = fine_sol[1]
+    #position_map_z = fine_sol[1]
     volume_elements = fine_sol[7]
     N_cell = ngrid * volume_elements
     total_e = np.sum(N_cell)
@@ -467,7 +468,7 @@ def compute_escape_fraction(fine_sol, T_e):
 ramp_values = np.linspace(0, 1, 40)
 escaped_total_list = []
 remaining_list = []
-N_remaining = NVal  #start with full plasma
+N_remaining = N_e  #start with full plasma
 
 for rampfrac in ramp_values:
     print(f"\n--- Rampfrac = {rampfrac:.3f} ---")
@@ -478,7 +479,7 @@ for rampfrac in ramp_values:
 
     # solve plasma for CURRENT number of particles
     fine_sol = find_solution(
-        NVal=N_remaining, T_e=1960, fE=omega_r/(2*np.pi),
+        NVal=N_remaining, T_e=T_e, fE=omega_r/(2*np.pi),
         mur2=rad2, B=B2,
         electrodeConfig=(current_voltages, electrode_borders),
         left=Llim, right=Rlim,
