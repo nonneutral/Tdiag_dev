@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 from scipy import special
 from pylab import rcParams
-from scipy.special import erfc #import error function
+from scipy.special import erf,erfc #import error function
 
 start_total_time = time.time()
 
@@ -428,42 +428,31 @@ end_total_time = time.time()
 print(f"\nTotal execution time: {end_total_time - start_total_time:.2f} seconds")
 
 print(n)
-
-
-#steps to find the '10 e- escaping' condition
-#1  since e- escape from the center of the plasma first, 
-#   open the well until e- at r=0 would escape if they have 10kT or more of energy
-#2  with those potentials, calculate how many e- actually escape
-#relative_density=sol[0]
-#relative_density=relative_density/np.sum(relative_density) #normalize it
-#sums=np.array(len(relative_density))
-#for r,x in enumerate(relative_density): #pick ngrid from sol
-#    full_solution = sol[3] #so-called voltageGuess
-#    oneD_solution = full_solution[r,:]
-#    escapeE = abs(oneD_solution[middle-of-plasma] - oneD_solution[barrier]) #find z indices at middle and barrier first
-#   E_int = integrate(MaxwellBoltzmann(E), from=escapeE, to=Infinity)
-#    sums[r] = E_int*np.sum(relative_density[r,:])
-#e-escaped = np.sum(sums)
     
-def compute_escape_fraction(fine_sol, T_e):
+def compute_escape(fine_sol, T_e):
     ngrid = fine_sol[0]
     full_scc_solution = fine_sol[3] #Full Space-Charge-Corrected (SCC) Solution, i.e. voltageGuess
     #position_map_z = fine_sol[1]
     volume_elements = fine_sol[7]
     N_cell = ngrid * volume_elements
-    total_e = np.sum(N_cell)
-    ngrid_norm = N_cell / total_e #normalise it
-    escaped_sum = np.zeros(len(ngrid_norm))
-    for r, x in enumerate(ngrid_norm): #pick ngrid from fine_sol
+    keep_sum = np.zeros(len(N_cell)) #len apparently returns the number of r values
+    for r, x in enumerate(N_cell): 
         oneD_solution = full_scc_solution[r, :] #Solution across z-axis per radial point, r
-        axial_well_idx = np.argmin(oneD_solution)
-        barrier_idx = np.argmax(oneD_solution)
+        axial_well_idx = np.argmax(oneD_solution)
+        barrier_idx = np.argmin(oneD_solution)
         escapeE = q_e * abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
-        E_int = erfc(np.sqrt(escapeE / (kb * T_e)))
-        escaped_sum[r] = E_int * np.sum(N_cell[r, :])
-        
-    return np.sum(escaped_sum) / total_e
+        E_int = erfc(np.sqrt(escapeE / (kb * T_e)))    #!!!should be difference of erf, not erfc
+        keep_sum[r] = E_int * np.sum(N_cell[r, :]) #keep: these are the ones that stay in the well
+    return np.sum(keep_sum)
     
+#ramp step 1: N=NVal, np.sum(keep_sum) --> keep[1]
+#ramp step 2: N=NVal, np.sum(keep_sum) --> keep[2]
+#ramp step 3: N=NVal - (keep[1]-keep[2]), np.sum(keep_sum) --> keep[3]
+#ramp step 4: N=NVal[3] - (keep[2]-keep[3]), np.sum(keep_sum) --> keep[4]
+#ramp step 5: N=NVal[4] - (keep[3]-keep[4]), np.sum(keep_sum) --> keep[5]
+#ramp step 6: N=NVal[5] - (keep[4]-keep[5]), np.sum(keep_sum) --> keep[6]
+#etc.
+
 ####----ESCAPE CURVE LOOP: Now want to make an escape curve for all rampfracs----####   
 ramp_values = np.linspace(0, 1, 40)
 escaped_total_list = []
@@ -489,10 +478,8 @@ for rampfrac in ramp_values:
         WantToInitializeWithPlasmaLength=False
     )
 
-    # compute escape FRACTION for this rampfrac
-    escaped_fraction = compute_escape_fraction(fine_sol, T_e)
-
-    N_escaped = escaped_fraction * N_remaining #how many left
+    # compute amount of e- that escaped between this rampfrac and the last
+    N_escaped = compute_escape(fine_sol, T_e)
     N_remaining = N_remaining - N_escaped #how many remain - need this update to ensure continuity in ramping
 
     print(f"Escaped this step: {N_escaped:.3e}")
