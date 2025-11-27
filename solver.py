@@ -93,7 +93,7 @@ def plasma_length_guess(NVal,mur2,rw,q_e,position_map_z,free_space_solution,elec
 
     return [plasma_left_end, plasma_right_end, plasma_length]
 
-def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,rfact,plotting, coarse_sol_divisor, WantToInitializeWithPlasmaLength = False):
+def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,rfact,plotting, coarse_sol_divisor, InitializeWithPlasmaLength = False):
     nr=rpoints
     nz=zpoints
     omega_c=q_e*B/m_e
@@ -156,7 +156,7 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
     lp_init_config = np.array([0.0, 0.0, 0.0])
     lp_init = 0
     
-    if WantToInitializeWithPlasmaLength == True:
+    if InitializeWithPlasmaLength == True:
         lp_init_config = np.array(plasma_length_guess(NVal, mur2, rw, q_e, position_map_z, free_space_solution, electrode_borders))
         lp_init = lp_init_config[2]
         print(f'Initial plasma length estimate: {lp_init_config[2]:0.3e} m (from {lp_init_config[0]:0.3e} m to {lp_init_config[1]:0.3e} m)')
@@ -333,11 +333,11 @@ for _ in range(8):  #COARSE LOOP - range(number) is just number of iterations to
         initialse_using_pl = False
     sol = find_solution(NVal=N_e,T_e=T_e,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
                         electrodeConfig=(initial_voltages,electrode_borders),
-                        left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=50, WantToInitializeWithPlasmaLength = initialse_using_pl)
+                        left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=50, InitializeWithPlasmaLength = initialse_using_pl)
     omega_r = sol[6]
     r_mean = sol[5]     #returned rmean
     vfree = sol[4]   #returned free_space_solution
-    print(f'potential-to-kT ratio: {np.max(-q_e*vfree)/(kb*1960):0.2f}')
+    print(f'potential-to-kT ratio: {np.max(-q_e*vfree)/(kb*T_e):0.2f}')
     if abs(r_mean - rad2) <= 0.01 * rad2:
         print("Desired radius achieved within 10% tolerance.")
         break
@@ -398,7 +398,7 @@ print(f"Adjusted initial voltages (V): {initial_voltages}")
 print('Now proceeding to fine solution where the potential drops to 10kT/e.') #SOLVING FOR FINE SOLUTION - STEP 6 ON SLIDES
 fine_sol=find_solution(NVal=N_e,T_e=T_e,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
                       electrodeConfig=(initial_voltages,electrode_borders),
-                      left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=100, WantToInitializeWithPlasmaLength=False)
+                      left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=100, InitializeWithPlasmaLength=False)
 
 n=fine_sol[0]
 voltageGuess=fine_sol[3]
@@ -475,7 +475,7 @@ for rampfrac in ramp_values:
         zpoints=40, rpoints=20,
         rfact=3.0, plotting=False,
         coarse_sol_divisor=100,
-        WantToInitializeWithPlasmaLength=False
+        InitializeWithPlasmaLength=False
     )
 
     # compute amount of e- that escaped between this rampfrac and the last
