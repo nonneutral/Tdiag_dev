@@ -305,11 +305,12 @@ rmean: average radius
 
 # Initial Input Values!!!
 initial_voltages=np.array([0,-50,-10,-50,0])
-final_voltages=np.array([0,-15,-10,-50,0])
+final_voltages=np.array([0,-15,-10,-50,0], dtype=float)
 electrode_borders=[0.025,0.050,0.100,0.125]
 Llim=0.035
 Rlim=0.110
 rampfrac=0.9
+NVal=8.0e6
 #---ADDED VARIABLES FOR COARSE LOOP---
 freq_guess = 2.0e6  # initial guess for rotation frequency in Hz
 #EDH: generate this from NVal, rad2, and plasma length
@@ -393,6 +394,7 @@ scaling_factor = thermal_voltage / current_drop
 #Only scale non-zero voltages (ground stays at 0)
 print(f"\n[Voltage Adjustment] Scaling factor = {scaling_factor:.3f}")
 initial_voltages = initial_voltages * scaling_factor
+final_voltages = final_voltages * scaling_factor
 print(f"Adjusted initial voltages (V): {initial_voltages}")
 
 print('Now proceeding to fine solution where the potential drops to 10kT/e.') #SOLVING FOR FINE SOLUTION - STEP 6 ON SLIDES
@@ -429,7 +431,7 @@ print(f"\nTotal execution time: {end_total_time - start_total_time:.2f} seconds"
 
 print(n)
     
-def compute_escape(fine_sol, T_e):
+def compute_kept_electrons(fine_sol, T_e):
     ngrid = fine_sol[0]
     full_scc_solution = fine_sol[3] #Full Space-Charge-Corrected (SCC) Solution, i.e. voltageGuess
     #position_map_z = fine_sol[1]
@@ -441,7 +443,7 @@ def compute_escape(fine_sol, T_e):
         axial_well_idx = np.argmax(oneD_solution)
         barrier_idx = np.argmin(oneD_solution)
         escapeE = q_e * abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
-        E_int = erfc(np.sqrt(escapeE / (kb * T_e)))    #!!!should be difference of erf, not erfc
+        E_int = 1.0 - erfc(np.sqrt(escapeE / (kb * T_e)))  #!!!should be difference of erf, not erfc
         keep_sum[r] = E_int * np.sum(N_cell[r, :]) #keep: these are the ones that stay in the well
     return np.sum(keep_sum)
     
@@ -453,22 +455,27 @@ def compute_escape(fine_sol, T_e):
 #ramp step 6: N=NVal[5] - (keep[4]-keep[5]), np.sum(keep_sum) --> keep[6]
 #etc.
 
-####----ESCAPE CURVE LOOP: Now want to make an escape curve for all rampfracs----####   
-ramp_values = np.linspace(0, 1, 40)
-escaped_total_list = []
+# ===== ESCAPE CURVE LOOP USING KEEP_SUM METHOD ===== #
+
+ramp_values = np.linspace(0, 0.45, 40)
+kept_list = []
+escaped_list = []
 remaining_list = []
-N_remaining = N_e  #start with full plasma
+frac_escaped_list = []
 
-for rampfrac in ramp_values:
+N_initial = N_e  # total electrons at ramp start
+N_current = N_initial
+
+for i, rampfrac in enumerate(ramp_values):
     print(f"\n--- Rampfrac = {rampfrac:.3f} ---")
-    print(f"Electrons entering this step: {N_remaining:.3e}")
+    print(f"Electrons entering this step: {N_current:.3e}")
 
-    #compute new electrode voltages for this ramp step
+    # Update electrode voltages based on ramp fraction
     current_voltages = initial_voltages + (final_voltages - initial_voltages) * rampfrac
 
-    # solve plasma for CURRENT number of particles
+    # Solve for plasma configuration at this ramp
     fine_sol = find_solution(
-        NVal=N_remaining, T_e=T_e, fE=omega_r/(2*np.pi),
+        NVal=N_current, T_e=T_e, fE=omega_r / (2 * np.pi),
         mur2=rad2, B=B2,
         electrodeConfig=(current_voltages, electrode_borders),
         left=Llim, right=Rlim,
@@ -478,30 +485,55 @@ for rampfrac in ramp_values:
         InitializeWithPlasmaLength=False
     )
 
-    # compute amount of e- that escaped between this rampfrac and the last
-    N_escaped = compute_escape(fine_sol, T_e) #!!! change this for 'keep' algorithm explained at line 448
-    N_remaining = N_remaining - N_escaped #how many remain - need this update to ensure continuity in ramping
+    # Compute number of electrons that stay trapped
+    N_entering = N_current
+    N_kept = compute_kept_electrons(fine_sol, T_e)
+    kept_list.append(N_kept)
 
+    if i == 0:
+        N_escaped = N_initial - N_kept
+    else:
+        N_escaped = kept_list[i - 1] - kept_list[i]
+    
+    N_current = N_current - N_escaped
+
+    escaped_list.append(N_escaped)
+    remaining_list.append(N_current)
+    frac_escaped = N_escaped / N_entering
+    
+    frac_escaped_list.append(frac_escaped)
+
+    print(f"Ramp {rampfrac:.3f}: frac escaped = {frac_escaped:.3e}")
     print(f"Escaped this step: {N_escaped:.3e}")
-    print(f"Remaining after step: {N_remaining:.3e}")
+    print(f"Remaining after step: {N_current:.3e}")
 
-    escaped_total_list.append(N_escaped)
-    remaining_list.append(N_remaining)
-
-    # if almost empty, break - just a check
-    if N_remaining < 1:
+    if N_current < 1:
         print("Plasma fully escaped — stopping early.")
         break
 
-#PLot the escape curve
-plt.figure(figsize=(7,5))
-plt.plot(ramp_values[:len(remaining_list)], remaining_list, '-o', label="Remaining electrons")
-plt.plot(ramp_values[:len(escaped_total_list)], escaped_total_list, '-o', label="Escaped per step")
+
+# ===== PLOT ESCAPE CURVE ===== #
+
+plt.figure(figsize=(7, 5))
+#plt.plot(ramp_values[:len(remaining_list)], remaining_list, '-o', label="Remaining electrons")
+plt.plot(ramp_values[:len(escaped_list)], escaped_list, '-o', label="Escaped per step")
 plt.xlabel("Ramp fraction (0 = strong confinement, 1 = weak)")
 plt.ylabel("Electrons")
+plt.yscale("log")
 plt.title("Plasma escape during ramp-down")
 plt.grid(True)
 plt.legend()
+plt.tight_layout()
 plt.show()
-####----END OF UPDATES----####
-    
+
+# ===== PLOT FRACTION ESCAPED PER STEP ===== #
+
+plt.figure(figsize=(7, 5))
+plt.plot(ramp_values[:len(frac_escaped_list)], frac_escaped_list, '-o', label="Fraction escaped per step")
+plt.xlabel("Ramp fraction (0 = strong confinement, 1 = weak)")
+plt.ylabel("Fraction escaped")
+plt.title("Fraction of plasma escaped at each ramp step")
+plt.grid(True)
+plt.legend()
+plt.tight_layout()
+plt.show()
