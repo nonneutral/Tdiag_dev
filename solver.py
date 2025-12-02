@@ -371,6 +371,11 @@ idx_elec   = int(np.argmin(np.abs(z_axis - electrode_borders[1])))
 z_nearest  = float(z_axis[idx_elec])
 v_sc_near  = float(v_sc_on[idx_elec])
 
+#!!! barrier voltage is not simply the voltage at the electrode border
+#instead use the same thing as for the escape loop
+#barrier_idx = np.argmin(oneD_solution)
+#escapeE[r] = q_e * abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
+
 print("\n--- Peak / Left Electrode Potentials (on-axis) ---")
 print(f"Free-space peak index (on-axis): {peak_idx}")
 print(f"z at free-space peak: {peak_z:.6f} m")
@@ -381,6 +386,11 @@ print(f"Nearest grid z: {z_nearest:.6f} m")
 print(f"Space-charge potential (nearest cell): {v_sc_near:.6f} V")
 
 #Adjust initial_voltages so that potential drop ≈ 10 kT/e
+#!!! the voltage ramp applied to the electrodes is given: the data was taken using a known voltage ramp
+#therefore it is not meaningful to change those
+#instead, adjust the ramp frac
+#if current_drop/thermal_voltage < 10 then ramp frac is too great
+#may need to iterate (solve again)
 thermal_voltage = 10 * kb * T_e / q_e # 1960 is the current T_e
 current_drop = Peak_Space_Charge_Pot - v_sc_near
 scaling_factor = thermal_voltage / current_drop
