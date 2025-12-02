@@ -459,6 +459,9 @@ def compute_kept_electrons(fine_sol, T_e, N_now, lastescapeE):
 # ===== ESCAPE CURVE LOOP USING KEEP_SUM METHOD ===== #
 #to be updated for consistency with new definition of compute_kept_electrons
 ramp_values = np.linspace(0.4, 0.5, 40)
+#!!! instead of hard-coding this linspace, make it go from rampfrac equiv of 20 kT/e to 0 kT/e
+#you can do this by finding the points for 20 kT/e and 10 kT/e and extrapolating
+
 kept_list = []
 escaped_list = []
 remaining_list = []
