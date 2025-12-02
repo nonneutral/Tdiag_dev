@@ -425,33 +425,30 @@ print(f"\nTotal execution time: {end_total_time - start_total_time:.2f} seconds"
 
 print(n)
     
-def compute_kept_electrons(fine_sol, T_e):
+#%%
+
+def compute_kept_electrons(fine_sol, T_e, N_now, lastescapeE):
     ngrid = fine_sol[0]
     full_scc_solution = fine_sol[3] #Full Space-Charge-Corrected (SCC) Solution, i.e. voltageGuess
     #position_map_z = fine_sol[1]
     volume_elements = fine_sol[7]
     N_cell = ngrid * volume_elements
-    keep_sum = np.zeros(len(N_cell)) #len apparently returns the number of r values
+    N_cell = N_cell*N_now/np.sum(N_cell) #normalize grid of number of e- per cell so it sums to N_now
+    escape_sum = np.zeros(len(N_cell)) #len apparently returns the number of r values
+    escapeE = np.zeros(len(N_cell))
+    print(f"sum(ngrid*volume_elements) = {np.sum(N_cell):.3f} ---")
     for r, x in enumerate(N_cell): 
         oneD_solution = full_scc_solution[r, :] #Solution across z-axis per radial point, r
         axial_well_idx = np.argmax(oneD_solution)
         barrier_idx = np.argmin(oneD_solution)
-        escapeE = q_e * abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
-        E_int = erf(np.sqrt(escapeE / (kb * T_e)))
-        keep_sum[r] = E_int * np.sum(N_cell[r, :]) #keep: these are the ones that stay in the well
-    return np.sum(keep_sum)
+        escapeE[r] = q_e * abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
+        E_int = erf(np.sqrt(lastescapeE[r] / (kb * T_e))) - erf(np.sqrt(escapeE[r] / (kb * T_e)))
+        escape_sum[r] = E_int * np.sum(N_cell[r, :]) #these are the ones that leave the well from that r
+    return np.sum(escape_sum),escapeE
     
-#ramp step 1: N=NVal, np.sum(keep_sum) --> keep[1]
-#ramp step 2: N=NVal, np.sum(keep_sum) --> keep[2]
-#ramp step 3: N=NVal - (keep[1]-keep[2]), np.sum(keep_sum) --> keep[3]
-#ramp step 4: N=NVal[3] - (keep[2]-keep[3]), np.sum(keep_sum) --> keep[4]
-#ramp step 5: N=NVal[4] - (keep[3]-keep[4]), np.sum(keep_sum) --> keep[5]
-#ramp step 6: N=NVal[5] - (keep[4]-keep[5]), np.sum(keep_sum) --> keep[6]
-#etc.
-
 # ===== ESCAPE CURVE LOOP USING KEEP_SUM METHOD ===== #
-
-ramp_values = np.linspace(0, 0.45, 40)
+#to be updated for consistency with new definition of compute_kept_electrons
+ramp_values = np.linspace(0.4, 0.5, 40)
 kept_list = []
 escaped_list = []
 remaining_list = []
