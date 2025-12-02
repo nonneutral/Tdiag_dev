@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 from scipy import special
 from pylab import rcParams
-from scipy.special import erf,erfc #import error function
+from scipy.special import erf #import error function
 
 start_total_time = time.time()
 
@@ -20,6 +20,7 @@ T_e=1960 #plasma temperature in kelvin
 N_e=8e6 #number of electrons
 rad2=0.0002 #plasma radius in meters
 B2=1.6 #magnetic field in tesla
+freq_guess = 2.0e6  # initial guess for rotation frequency in Hz
 
 Mmax=1
 Nmax=20000
@@ -303,25 +304,18 @@ free_space_solution: the potential of each point in the absence of charge (a mat
 rmean: average radius
 """
 
-# Initial Input Values!!!
+# Initial Input Values
 initial_voltages=np.array([0,-50,-10,-50,0])
 final_voltages=np.array([0,-15,-10,-50,0], dtype=float)
 electrode_borders=[0.025,0.050,0.100,0.125]
 Llim=0.035
 Rlim=0.110
 rampfrac=0.9
-NVal=8.0e6
-#---ADDED VARIABLES FOR COARSE LOOP---
-freq_guess = 2.0e6  # initial guess for rotation frequency in Hz
-#EDH: generate this from NVal, rad2, and plasma length
-#: guess plasma length based on the confining potentials
-#: use the infinite length space charge formula for \phi_0, with N=NVal and r=1 mm
-#: plasma length is distance between the points on blue curve at offset = \phi_0 from the potential minimum
-omega_r  = 2*np.pi*freq_guess
-#---END OF ADDED VARIABLES FOR COARSE LOOP---
+NVal=N_e
 current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages)*rampfrac
 
 #---FUNCTION TO RETUNE OMEGA_R TO HIT TARGET RADIUS; STEP 4 ON SLIDES - UPDATED 25th OCT---
+omega_r  = 2*np.pi*freq_guess
 def retune_omega_to_hit_radius(omega_r, r_mean, r_target):
     r_ratio_sq = (r_mean / r_target)**2
     omega_r_new = r_ratio_sq * omega_r
@@ -443,7 +437,7 @@ def compute_kept_electrons(fine_sol, T_e):
         axial_well_idx = np.argmax(oneD_solution)
         barrier_idx = np.argmin(oneD_solution)
         escapeE = q_e * abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
-        E_int = 1.0 - erfc(np.sqrt(escapeE / (kb * T_e)))  #!!!should be difference of erf, not erfc
+        E_int = erf(np.sqrt(escapeE / (kb * T_e)))
         keep_sum[r] = E_int * np.sum(N_cell[r, :]) #keep: these are the ones that stay in the well
     return np.sum(keep_sum)
     
