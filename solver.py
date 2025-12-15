@@ -359,31 +359,21 @@ vfree_on = vfree[0, :]
 v_sc_on = voltageGuess[0, :]
 
 # 1) Index where free-space potential peaks (on-axis)
-peak_idx = int(np.argmax(vfree_on))
-peak_z = float(z_axis[peak_idx])
-vfree_peak = float(vfree_on[peak_idx])
+#peak_idx = int(np.argmax(vfree_on))
+#peak_z = float(z_axis[peak_idx])
+#vfree_peak = float(vfree_on[peak_idx])
 
 # 2) Space-charge-corrected potential at that (on-axis) index
-Peak_Space_Charge_Pot = float(voltageGuess[0, peak_idx])
+#Peak_Space_Charge_Pot = float(voltageGuess[0, peak_idx])
 
 # 3) Space-charge-corrected potential at electrode border (on-axis)
-idx_elec   = int(np.argmin(np.abs(z_axis - electrode_borders[1]))) 
-z_nearest  = float(z_axis[idx_elec])
-v_sc_near  = float(v_sc_on[idx_elec])
+#idx_elec   = int(np.argmin(np.abs(z_axis - electrode_borders[1]))) 
+#z_nearest  = float(z_axis[idx_elec])
+#v_sc_near  = float(v_sc_on[idx_elec])
 
 #!!! barrier voltage is not simply the voltage at the electrode border
-#instead use the same thing as for the escape loop
-#barrier_idx = np.argmin(oneD_solution)
-#escapeE[r] = q_e * abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
+#instead use the same thing as for the escape loop <--- addressed within the drop_for_rampfrac function below
 
-print("\n--- Peak / Left Electrode Potentials (on-axis) ---")
-print(f"Free-space peak index (on-axis): {peak_idx}")
-print(f"z at free-space peak: {peak_z:.6f} m")
-print(f"Free-space potential at peak: {vfree_peak:.6f} V")
-print(f"Space-charge corrected potential at peak index: {Peak_Space_Charge_Pot:.6f} V")
-print(f"Nearest grid index: {idx_elec}")
-print(f"Nearest grid z: {z_nearest:.6f} m")
-print(f"Space-charge potential (nearest cell): {v_sc_near:.6f} V")
 
 #Adjust initial_voltages so that potential drop ≈ 10 kT/e
 #!!! the voltage ramp applied to the electrodes is given: the data was taken using a known voltage ramp
@@ -391,20 +381,90 @@ print(f"Space-charge potential (nearest cell): {v_sc_near:.6f} V")
 #instead, adjust the ramp frac
 #if current_drop/thermal_voltage < 10 then ramp frac is too great
 #may need to iterate (solve again)
-thermal_voltage = 10 * kb * T_e / q_e # 1960 is the current T_e
-current_drop = Peak_Space_Charge_Pot - v_sc_near
-scaling_factor = thermal_voltage / current_drop
+# --- STEP 5 RED0: Find rampfrac* such that (Peak_Space_Charge_Pot - v_sc_near) ~= 10*kB*T/q_e --- #
+target_drop = 10 * kb * T_e / q_e  # volts (this is 10 kT/e)
+rampfrac_history = []             # store solutions here (append each run)
 
-#Only scale non-zero voltages (ground stays at 0)
-print(f"\n[Voltage Adjustment] Scaling factor = {scaling_factor:.3f}")
-initial_voltages = initial_voltages * scaling_factor
-final_voltages = final_voltages * scaling_factor
-print(f"Adjusted initial voltages (V): {initial_voltages}")
+def drop_for_rampfrac(rf, omega_r_use):
+    
+    volts = np.array(initial_voltages) + (np.array(final_voltages) - np.array(initial_voltages)) * rf # volts along the ramp
+    sol_tmp = find_solution(
+        NVal=N_e, T_e=T_e, fE=omega_r_use/(2*np.pi), mur2=rad2, B=B2,
+        electrodeConfig=(volts, electrode_borders),
+        left=Llim, right=Rlim,
+        zpoints=40, rpoints=20, rfact=3.0,
+        plotting=False, coarse_sol_divisor=100,
+        InitializeWithPlasmaLength=False
+    ) # a "rough" solve
 
-print('Now proceeding to fine solution where the potential drops to 10kT/e.') #SOLVING FOR FINE SOLUTION - STEP 6 ON SLIDES
+    vfree_tmp = sol_tmp[4]          # free_space_solution
+    vsc_tmp   = sol_tmp[3]          # voltageGuess (space-charge corrected)
+    vfree_on  = vfree_tmp[0, :]
+    vsc_on    = vsc_tmp[0, :]
+
+    peak_idx   = int(np.argmax(vfree_on))
+    barrier_idx = int(np.argmin(vsc_on))  # keep your same barrier definition
+    drop = abs(float(vsc_on[peak_idx] - vsc_on[barrier_idx]))  # magnitude in volts
+
+    return drop, volts, sol_tmp
+
+# coarse scan to find a bracket (or at least a good start)
+grid = np.linspace(0.0, 1.0, 11)
+drops = []
+for rf in grid:
+    d, _, _ = drop_for_rampfrac(rf, omega_r)
+    drops.append(d)
+
+drops = np.array(drops)
+
+# if reachable, bracket around target
+idx_sorted = np.argsort(np.abs(drops - target_drop))
+best_idx = int(idx_sorted[0])
+best_rf  = float(grid[best_idx])
+best_drop = float(drops[best_idx])
+
+# try to find a sign-change bracket in the grid (assumes roughly monotonic)
+bracket = None
+for i in range(len(grid) - 1):
+    if (drops[i] - target_drop) * (drops[i+1] - target_drop) <= 0:
+        bracket = (float(grid[i]), float(grid[i+1]))
+        break
+
+if bracket is None:
+    # Not bracketed -> just take closest scan point
+    rampfrac_star = best_rf
+    achieved_drop = best_drop
+else:
+    lo, hi = bracket
+    # bisection refine (no extra imports)
+    for _ in range(15):
+        mid = 0.5 * (lo + hi)
+        dmid, _, _ = drop_for_rampfrac(mid, omega_r)
+        if (dmid - target_drop) == 0:
+            lo = hi = mid
+            break
+        # choose side that contains the target
+        dlo, _, _ = drop_for_rampfrac(lo, omega_r)
+        if (dlo - target_drop) * (dmid - target_drop) <= 0:
+            hi = mid
+        else:
+            lo = mid
+    rampfrac_star = 0.5 * (lo + hi)
+    achieved_drop, _, _ = drop_for_rampfrac(rampfrac_star, omega_r)
+
+rampfrac_history.append(rampfrac_star)
+print(f"\n[Rampfrac Tuning] target drop = {target_drop:.3f} V")
+print(f"[Rampfrac Tuning] rampfrac* = {rampfrac_star:.4f}, achieved drop = {achieved_drop:.3f} V")
+
+# Use the found rampfrac for the fine solution
+current_voltages = np.array(initial_voltages) + (np.array(final_voltages) - np.array(initial_voltages)) * rampfrac_star
+
+#--------SOLVING FOR FINE SOLUTION - STEP 6 ON SLIDES--------#
+print('Now proceeding to fine solution where the potential drops to 10kT/e.') 
 fine_sol=find_solution(NVal=N_e,T_e=T_e,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
-                      electrodeConfig=(initial_voltages,electrode_borders),
-                      left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=100, InitializeWithPlasmaLength=False)
+                      electrodeConfig=(current_voltages,electrode_borders),
+                      left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, 
+                      coarse_sol_divisor=100, InitializeWithPlasmaLength=False)
 
 n=fine_sol[0]
 voltageGuess=fine_sol[3]
