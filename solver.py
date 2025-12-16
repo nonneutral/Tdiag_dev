@@ -6,6 +6,8 @@ from matplotlib import cm
 from scipy import special
 from pylab import rcParams
 from scipy.special import erf #import error function
+from scipy.special import erfc
+
 
 start_total_time = time.time()
 
@@ -498,28 +500,46 @@ print(n)
     
 #%%
 
-def compute_kept_electrons(fine_sol, T_e): #, N_now, lastescapeE
+#def compute_kept_electrons(fine_sol, T_e): #, N_now, lastescapeE
+#    ngrid = fine_sol[0]
+#    full_scc_solution = fine_sol[3] #Full Space-Charge-Corrected (SCC) Solution, i.e. voltageGuess
+#    #position_map_z = fine_sol[1]
+#    volume_elements = fine_sol[7]
+#    N_cell = ngrid * volume_elements
+#    N_cell = N_cell*N_now/np.sum(N_cell) #normalize grid of number of e- per cell so it sums to N_now
+#    escape_sum = np.zeros(len(N_cell)) #len apparently returns the number of r values
+#    escapeE = np.zeros(len(N_cell))
+#    print(f"sum(ngrid*volume_elements) = {np.sum(N_cell):.3f} ---")
+#    for r, x in enumerate(N_cell): 
+#        oneD_solution = full_scc_solution[r, :] #Solution across z-axis per radial point, r
+#        axial_well_idx = np.argmax(oneD_solution)
+#        barrier_idx = np.argmin(oneD_solution)
+#        escapeE[r] = q_e * abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
+#        E_int = erf(np.sqrt(lastescapeE[r] / (kb * T_e))) - erf(np.sqrt(escapeE[r] / (kb * T_e)))
+#        escape_sum[r] = E_int * np.sum(N_cell[r, :]) #these are the ones that leave the well from that r
+#    return np.sum(escape_sum),escapeE
+#%%    
+def compute_esc_electrons(fine_sol, T_e): #, N_now, lastescapeE
     ngrid = fine_sol[0]
     full_scc_solution = fine_sol[3] #Full Space-Charge-Corrected (SCC) Solution, i.e. voltageGuess
-    #position_map_z = fine_sol[1]
+    position_map_z = fine_sol[1]
     volume_elements = fine_sol[7]
     N_cell = ngrid * volume_elements
-    N_cell = N_cell*N_now/np.sum(N_cell) #normalize grid of number of e- per cell so it sums to N_now
-    escape_sum = np.zeros(len(N_cell)) #len apparently returns the number of r values
-    escapeE = np.zeros(len(N_cell))
+    #N_cell = N_cell*N_now/np.sum(N_cell) #normalize grid of number of e- per cell so it sums to N_now
+    escape_sum = np.zeros(len(N_cell)) #len apparently returns the number of r values     escapeE = np.zeros(len(N_cell))
     print(f"sum(ngrid*volume_elements) = {np.sum(N_cell):.3f} ---")
     for r, x in enumerate(N_cell): 
         oneD_solution = full_scc_solution[r, :] #Solution across z-axis per radial point, r
         axial_well_idx = np.argmax(oneD_solution)
-        barrier_idx = np.argmin(oneD_solution)
-        escapeE[r] = q_e * abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
-        E_int = erf(np.sqrt(lastescapeE[r] / (kb * T_e))) - erf(np.sqrt(escapeE[r] / (kb * T_e)))
+        barrier_idx = np.argmin(oneD_solution[0:axial_well_idx])  # left barrier only
+        escapeE = q_e * abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
+        E_int = erfc(np.sqrt(escapeE / (kb * T_e)))
         escape_sum[r] = E_int * np.sum(N_cell[r, :]) #these are the ones that leave the well from that r
-    return np.sum(escape_sum),escapeE
-    
+    return np.sum(escape_sum)
+
 # ===== ESCAPE CURVE LOOP USING KEEP_SUM METHOD ===== #
 #to be updated for consistency with new definition of compute_kept_electrons
-ramp_values = np.linspace(0.4, 0.5, 40)
+ramp_values = np.linspace(0.0, rampfrac_star, 40)
 #!!! instead of hard-coding this linspace, make it go from rampfrac equiv of 20 kT/e to 0 kT/e
 #you can do this by finding the points for 20 kT/e and 10 kT/e and extrapolating
 
@@ -545,24 +565,24 @@ for i, rampfrac in enumerate(ramp_values):
         electrodeConfig=(current_voltages, electrode_borders),
         left=Llim, right=Rlim,
         zpoints=40, rpoints=20,
-        rfact=3.0, plotting=False,
+        rfact=3.0, plotting=True,
         coarse_sol_divisor=100,
         InitializeWithPlasmaLength=False
     )
 
     # Compute number of electrons that stay trapped
     N_entering = N_current
-    N_kept = compute_kept_electrons(fine_sol, T_e)
-    kept_list.append(N_kept)
+    N_escaped = compute_esc_electrons(fine_sol, T_e)
+    escaped_list.append(N_escaped)
 
-    if i == 0:
-        N_escaped = N_initial - N_kept
-    else:
-        N_escaped = kept_list[i - 1] - kept_list[i]
+    #if i == 0:
+    #    N_escaped = N_initial - N_kept
+    #else:
+    #    N_escaped = kept_list[i - 1] - kept_list[i]
     
     N_current = N_current - N_escaped
 
-    escaped_list.append(N_escaped)
+    #escaped_list.append(N_escaped)
     remaining_list.append(N_current)
     frac_escaped = N_escaped / N_entering
     
