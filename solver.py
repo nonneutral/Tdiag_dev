@@ -165,7 +165,7 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
         quad_eq_c = (NVal*q_e**2)/(np.pi*lp_init*mur2*mur2*(2*m_e*e0))
         omega_r = (omega_c-np.sqrt(omega_c*omega_c-4*quad_eq_c))
 
-    print(f'Initial omega_r estimate = {omega_r}')
+    print(f'omega_r = {omega_r}')
 
     phieff=np.array([[.5*m_e*omega_r*(omega_c-omega_r)*(rbound*rind/nr)**2 
                        for zind in range(nz)] for rind in range(nr)]) 
@@ -334,7 +334,7 @@ for _ in range(8):  #COARSE LOOP - range(number) is just number of iterations to
     vfree = sol[4]   #returned free_space_solution
     print(f'potential-to-kT ratio: {np.max(-q_e*vfree)/(kb*T_e):0.2f}')
     if abs(r_mean - rad2) <= 0.01 * rad2:
-        print("Desired radius achieved within 10% tolerance.")
+        print("Desired radius achieved within 1% tolerance.")
         break
     omega_new = retune_omega_to_hit_radius(omega_r, r_mean, rad2) #using funciton to retune omega_r and hit traget radius.
     if omega_new is None:
@@ -401,15 +401,16 @@ def drop_for_rampfrac(rf, omega_r_use):
     vsc_tmp   = sol_tmp[3]          # voltageGuess (space-charge corrected)
     vfree_on  = vfree_tmp[0, :]
     vsc_on    = vsc_tmp[0, :]
+    print(f'rf: {rf:.4f}')
 
     peak_idx   = int(np.argmax(vfree_on))
-    barrier_idx = int(np.argmin(vsc_on))  # keep your same barrier definition
+    barrier_idx = int(np.argmin(vsc_on[0:peak_idx]))  # keep your same barrier definition
     drop = abs(float(vsc_on[peak_idx] - vsc_on[barrier_idx]))  # magnitude in volts
 
     return drop, volts, sol_tmp
 
 # coarse scan to find a bracket (or at least a good start)
-grid = np.linspace(0.0, 1.0, 11)
+grid = np.linspace(0.0, 0.9, 20)
 drops = []
 for rf in grid:
     d, _, _ = drop_for_rampfrac(rf, omega_r)
@@ -497,7 +498,7 @@ print(n)
     
 #%%
 
-def compute_kept_electrons(fine_sol, T_e, N_now, lastescapeE):
+def compute_kept_electrons(fine_sol, T_e): #, N_now, lastescapeE
     ngrid = fine_sol[0]
     full_scc_solution = fine_sol[3] #Full Space-Charge-Corrected (SCC) Solution, i.e. voltageGuess
     #position_map_z = fine_sol[1]
@@ -576,7 +577,7 @@ for i, rampfrac in enumerate(ramp_values):
         break
 
 
-# ===== PLOT ESCAPE CURVE ===== #
+#%% ===== PLOT ESCAPE CURVE ===== #
 
 plt.figure(figsize=(7, 5))
 #plt.plot(ramp_values[:len(remaining_list)], remaining_list, '-o', label="Remaining electrons")
@@ -601,3 +602,5 @@ plt.grid(True)
 plt.legend()
 plt.tight_layout()
 plt.show()
+
+# %%
