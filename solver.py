@@ -23,7 +23,7 @@ N_e=8e6 #number of electrons
 rad2=0.0002 #plasma radius in meters
 B2=1.6 #magnetic field in tesla
 freq_guess = 2.0e6  # initial guess for rotation frequency in Hz
-
+eps50 = 1e-3 # tolerance for rampfrac bisection
 Mmax=1
 Nmax=20000
 zeros=[special.jn_zeros(m,Nmax) for m in range(Mmax)]
@@ -96,7 +96,9 @@ def plasma_length_guess(NVal,mur2,rw,q_e,position_map_z,free_space_solution,elec
 
     return [plasma_left_end, plasma_right_end, plasma_length]
 
-def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,rfact,plotting, coarse_sol_divisor, InitializeWithPlasmaLength = False):
+def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,
+                  rpoints,rfact,plotting, coarse_sol_divisor, InitializeWithPlasmaLength = False,
+                  fail_action='raise', debug_tag=''):
     nr=rpoints
     nz=zpoints
     omega_c=q_e*B/m_e
@@ -208,6 +210,13 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
         voltageGuess+=get_voltage_from_charge_distr(q_e*ngrid)
         exponential=-(voltageGuess*(-q_e)+phieff)/(kb*T_e)
         
+        # -------- FAIL-FAST GUARD #1: NaNs/Infs in exponential --------
+        if not np.all(np.isfinite(exponential)):
+            msg = f"[find_solution:{debug_tag}] non-finite exponential encountered (NaN/Inf)."
+            if fail_action == "raise":
+                raise RuntimeError(msg)
+            return None
+
         #roi calculation 
         exponential_roi_init = exponential[0,roi_init]
         mx_exp_z = position_map_z[0,roi_init][np.argmax(exponential_roi_init)]
@@ -228,9 +237,40 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
 
 
         total=np.sum(nnew*volume_elements)
+        
+        # -------- FAIL-FAST GUARD #2: total <= 0 or non-finite -> normalization will explode --------
+        if (not np.isfinite(total)) or (total <= 0):
+            msg = f"[find_solution:{debug_tag}] invalid total={total} after ROI truncation (likely ROI too small/empty)."
+            if fail_action == "raise":
+                raise RuntimeError(msg)
+            return None
+        
         nnew*=NVal/total
+        
+        # -------- FAIL-FAST GUARD #3: nnew becomes non-finite after scaling --------
+        if not np.all(np.isfinite(nnew)):
+            msg = f"[find_solution:{debug_tag}] non-finite nnew after scaling by NVal/total."
+            if fail_action == "raise":
+                raise RuntimeError(msg)
+            return None
+
         ngrid=ngrid*(1-epsilon)+epsilon*nnew
+        
+        # -------- FAIL-FAST GUARD #4: ngrid blows up --------
+        if not np.all(np.isfinite(ngrid)):
+            msg = f"[find_solution:{debug_tag}] non-finite ngrid after relaxation update."
+            if fail_action == "raise":
+                raise RuntimeError(msg)
+            return None
+
         err=np.sum(np.abs((ngrid-nnew)*volume_elements))
+        
+        # -------- FAIL-FAST GUARD #5: err becomes NaN/Inf (then break condition never triggers) --------
+        if not np.isfinite(err):
+            msg = f"[find_solution:{debug_tag}] non-finite err; solver would never satisfy err < threshold."
+            if fail_action == "raise":
+                raise RuntimeError(msg)
+            return None
 
         if  i%100==0:
             if plotting:
@@ -396,8 +436,11 @@ def drop_for_rampfrac(rf, omega_r_use):
         left=Llim, right=Rlim,
         zpoints=40, rpoints=20, rfact=3.0,
         plotting=False, coarse_sol_divisor=100,
-        InitializeWithPlasmaLength=False
+        InitializeWithPlasmaLength=False, fail_action='return_none', debug_tag=f"rapfrac={rf:.3f}"
     ) # a "rough" solve
+    
+    if sol_tmp is None:
+        return np.inf, volts, None
 
     vfree_tmp = sol_tmp[4]          # free_space_solution
     vsc_tmp   = sol_tmp[3]          # voltageGuess (space-charge corrected)
@@ -443,7 +486,7 @@ else:
     for _ in range(15):
         mid = 0.5 * (lo + hi)
         dmid, _, _ = drop_for_rampfrac(mid, omega_r)
-        if (dmid - target_drop) == 0:
+        if np.abs(dmid - target_drop) <= eps50:
             lo = hi = mid
             break
         # choose side that contains the target
@@ -539,7 +582,7 @@ def compute_esc_electrons(fine_sol, T_e): #, N_now, lastescapeE
 
 # ===== ESCAPE CURVE LOOP USING KEEP_SUM METHOD ===== #
 #to be updated for consistency with new definition of compute_kept_electrons
-ramp_values = np.linspace(0.0, rampfrac_star, 40)
+ramp_values = np.linspace(rampfrac_star, rampfrac_end, 40) # find rampfrac_end 
 #!!! instead of hard-coding this linspace, make it go from rampfrac equiv of 20 kT/e to 0 kT/e
 #you can do this by finding the points for 20 kT/e and 10 kT/e and extrapolating
 
@@ -565,20 +608,20 @@ for i, rampfrac in enumerate(ramp_values):
         electrodeConfig=(current_voltages, electrode_borders),
         left=Llim, right=Rlim,
         zpoints=40, rpoints=20,
-        rfact=3.0, plotting=True,
+        rfact=3.0, plotting=False,
         coarse_sol_divisor=100,
         InitializeWithPlasmaLength=False
     )
 
     # Compute number of electrons that stay trapped
     N_entering = N_current
-    N_escaped = compute_esc_electrons(fine_sol, T_e)
-    escaped_list.append(N_escaped)
+    N_erfc = compute_esc_electrons(fine_sol, T_e)
+    escaped_list.append(N_erfc)
 
-    #if i == 0:
-    #    N_escaped = N_initial - N_kept
-    #else:
-    #    N_escaped = kept_list[i - 1] - kept_list[i]
+    if i == 0:
+        N_escaped = 0
+    else:
+        N_escaped = escaped_list[i] - escaped_list[i - 1]
     
     N_current = N_current - N_escaped
 
