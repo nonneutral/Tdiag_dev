@@ -7,6 +7,7 @@ from scipy import special
 from pylab import rcParams
 from scipy.special import erf #import error function
 from scipy.special import erfc
+from scipy.optimize import root_scalar
 
 
 start_total_time = time.time()
@@ -461,8 +462,29 @@ for rf in grid:
     d, _, _ = drop_for_rampfrac(rf, omega_r)
     drops.append(d)
 
+
 drops = np.array(drops)
 
+x_arange = np.linspace(0,1,1000)
+drops_interp = np.interp(x_arange, grid, drops)
+
+#%%
+plt.title("drop vs rampfracs coarse scan")
+plt.plot(grid, drops,"o")
+plt.plot(x_arange, drops_interp)
+plt.hlines(target_drop, 0,1)
+plt.show()
+
+rampfrac_star = x_arange[np.argmin(abs(drops_interp - target_drop))]
+achieved_drop = drops_interp[np.argmin(abs(drops_interp - target_drop))]
+
+print(rampfrac_star)
+print(achieved_drop)
+
+rampfrac_end =  x_arange[np.argmin(abs(drops_interp - target_drop/10))]
+rampfrac_end =  x_arange[np.argmin(abs(drops_interp - target_drop/10))]
+#%%
+"""
 # if reachable, bracket around target
 idx_sorted = np.argsort(np.abs(drops - target_drop))
 best_idx = int(idx_sorted[0])
@@ -481,6 +503,7 @@ if bracket is None:
     rampfrac_star = best_rf
     achieved_drop = best_drop
 else:
+
     lo, hi = bracket
     # bisection refine (no extra imports)
     for _ in range(15):
@@ -498,7 +521,12 @@ else:
     rampfrac_star = 0.5 * (lo + hi)
     achieved_drop, _, _ = drop_for_rampfrac(rampfrac_star, omega_r)
 
+
+
+    achieved_drop, _, _ = drop_for_rampfrac(rampfrac_star, omega_r)
 rampfrac_history.append(rampfrac_star)
+"""
+
 print(f"\n[Rampfrac Tuning] target drop = {target_drop:.3f} V")
 print(f"[Rampfrac Tuning] rampfrac* = {rampfrac_star:.4f}, achieved drop = {achieved_drop:.3f} V")
 
@@ -582,7 +610,7 @@ def compute_esc_electrons(fine_sol, T_e): #, N_now, lastescapeE
 
 # ===== ESCAPE CURVE LOOP USING KEEP_SUM METHOD ===== #
 #to be updated for consistency with new definition of compute_kept_electrons
-ramp_values = np.linspace(rampfrac_star, rampfrac_end, 40) # find rampfrac_end 
+ramp_values = np.linspace(rampfrac_star, 0.95, 100) # find rampfrac_end 
 #!!! instead of hard-coding this linspace, make it go from rampfrac equiv of 20 kT/e to 0 kT/e
 #you can do this by finding the points for 20 kT/e and 10 kT/e and extrapolating
 
