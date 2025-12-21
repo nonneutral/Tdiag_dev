@@ -7,7 +7,6 @@ from scipy import special
 from pylab import rcParams
 from scipy.special import erf #import error function
 from scipy.special import erfc
-from scipy.optimize import root_scalar
 
 
 start_total_time = time.time()
@@ -233,8 +232,8 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,
         #nnew[exponential>mx-magic]=np.exp(exponential-mx)[exponential>mx-magic]
         nnew=np.exp(exponential-mx)
 
-        nnew[position_map_z<roi_left]=0
-        nnew[position_map_z>roi_right]=0
+        nnew[position_map_z<roi_left-1]=0
+        nnew[position_map_z>roi_right+1]=0
 
 
         total=np.sum(nnew*volume_elements)
@@ -425,10 +424,8 @@ v_sc_on = voltageGuess[0, :]
 #if current_drop/thermal_voltage < 10 then ramp frac is too great
 #may need to iterate (solve again)
 # --- STEP 5 RED0: Find rampfrac* such that (Peak_Space_Charge_Pot - v_sc_near) ~= 10*kB*T/q_e --- #
-target_drop = 10 * kb * T_e / q_e  # volts (this is 10 kT/e)
-rampfrac_history = []             # store solutions here (append each run)
 
-def drop_for_rampfrac(rf, omega_r_use):
+def drop_for_rampfrac(rf, omega_r_use): # finds "drop", i.e. potential difference between plasma and barrier, for a given rampfrac
     
     volts = np.array(initial_voltages) + (np.array(final_voltages) - np.array(initial_voltages)) * rf # volts along the ramp
     sol_tmp = find_solution(
@@ -437,7 +434,7 @@ def drop_for_rampfrac(rf, omega_r_use):
         left=Llim, right=Rlim,
         zpoints=40, rpoints=20, rfact=3.0,
         plotting=False, coarse_sol_divisor=100,
-        InitializeWithPlasmaLength=False, fail_action='return_none', debug_tag=f"rapfrac={rf:.3f}"
+        InitializeWithPlasmaLength=False, fail_action='return_none', debug_tag=f"rampfrac={rf:.3f}"
     ) # a "rough" solve
     
     if sol_tmp is None:
@@ -450,13 +447,17 @@ def drop_for_rampfrac(rf, omega_r_use):
     print(f'rf: {rf:.4f}')
 
     peak_idx   = int(np.argmax(vfree_on))
-    barrier_idx = int(np.argmin(vsc_on[0:peak_idx]))  # keep your same barrier definition
-    drop = abs(float(vsc_on[peak_idx] - vsc_on[barrier_idx]))  # magnitude in volts
+    barrier_idx = int(np.argmin(vsc_on[0:peak_idx]))  # left barrier only may need to change if plasma shifts right
+    drop = float(vsc_on[peak_idx] - vfree_on[barrier_idx])  # magnitude in volts
+
+    if vsc_on[peak_idx] - vfree_on[barrier_idx] < 0:
+        print(f"  Warning: negative drop ({drop:.3f} V) for rampfrac={rf:.4f}; plasma may be escaping.")
+        
 
     return drop, volts, sol_tmp
 
 # coarse scan to find a bracket (or at least a good start)
-grid = np.linspace(0.0, 0.9, 20)
+grid = np.linspace(0.0, 1, 21) # 21 is number of points to scan arbitrarily chosen
 drops = []
 for rf in grid:
     d, _, _ = drop_for_rampfrac(rf, omega_r)
@@ -465,24 +466,36 @@ for rf in grid:
 
 drops = np.array(drops)
 
-x_arange = np.linspace(0,1,1000)
+x_arange = np.linspace(0,1,10000)
 drops_interp = np.interp(x_arange, grid, drops)
 
 #%%
-plt.title("drop vs rampfracs coarse scan")
-plt.plot(grid, drops,"o")
-plt.plot(x_arange, drops_interp)
-plt.hlines(target_drop, 0,1)
+
+target_drop = 20 * kb * T_e / q_e  # volts (this is 10 kT/e)
+end_drop = 0 # volts
+rampfrac_history = []             # store solutions here (append each run)
+
+plt.title("drop vs rampfracs coarse scan with interpolation")
+plt.plot(grid, drops,"o", label="coarse scan")
+plt.plot(x_arange, drops_interp, "-", label="interp_points = 10000")
+plt.hlines(target_drop, 0,1, label="target drop", colors='red')
+plt.legend()
 plt.show()
 
-rampfrac_star = x_arange[np.argmin(abs(drops_interp - target_drop))]
-achieved_drop = drops_interp[np.argmin(abs(drops_interp - target_drop))]
+def find_rf_for_target_drop(target_drop,interp_points=10000):
+    x_arange = np.linspace(0,1,interp_points)
+    drops_interp = np.interp(x_arange, grid, drops)
+    rf_star = x_arange[np.argmin(abs(drops_interp - target_drop))]
+    achieved_drop = drops_interp[np.argmin(drops_interp - target_drop)]
+    return rf_star, achieved_drop
+
+rampfrac_star = find_rf_for_target_drop(target_drop,interp_points=10000)[0]
+achieved_drop = find_rf_for_target_drop(end_drop,interp_points=10000)[1]
 
 print(rampfrac_star)
 print(achieved_drop)
 
-rampfrac_end =  x_arange[np.argmin(abs(drops_interp - target_drop/10))]
-rampfrac_end =  x_arange[np.argmin(abs(drops_interp - target_drop/10))]
+rampfrac_end = find_rf_for_target_drop(0)[0]
 #%%
 """
 # if reachable, bracket around target
@@ -610,7 +623,7 @@ def compute_esc_electrons(fine_sol, T_e): #, N_now, lastescapeE
 
 # ===== ESCAPE CURVE LOOP USING KEEP_SUM METHOD ===== #
 #to be updated for consistency with new definition of compute_kept_electrons
-ramp_values = np.linspace(rampfrac_star, 0.95, 100) # find rampfrac_end 
+ramp_values = np.linspace(rampfrac_star, rampfrac_end, 100) # find rampfrac_end 
 #!!! instead of hard-coding this linspace, make it go from rampfrac equiv of 20 kT/e to 0 kT/e
 #you can do this by finding the points for 20 kT/e and 10 kT/e and extrapolating
 
