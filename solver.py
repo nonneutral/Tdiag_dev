@@ -471,7 +471,7 @@ drops_interp = np.interp(x_arange, grid, drops)
 
 #%%
 
-target_drop = 20 * kb * T_e / q_e  # volts (this is 10 kT/e)
+target_drop = 10 * kb * T_e / q_e  # volts (this is 10 kT/e)
 end_drop = 0 # volts
 rampfrac_history = []             # store solutions here (append each run)
 
@@ -546,6 +546,7 @@ print(f"[Rampfrac Tuning] rampfrac* = {rampfrac_star:.4f}, achieved drop = {achi
 # Use the found rampfrac for the fine solution
 current_voltages = np.array(initial_voltages) + (np.array(final_voltages) - np.array(initial_voltages)) * rampfrac_star
 
+#%%
 #--------SOLVING FOR FINE SOLUTION - STEP 6 ON SLIDES--------#
 print('Now proceeding to fine solution where the potential drops to 10kT/e.') 
 fine_sol=find_solution(NVal=N_e,T_e=T_e,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
@@ -619,7 +620,10 @@ def compute_esc_electrons(fine_sol, T_e): #, N_now, lastescapeE
         escapeE = q_e * abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
         E_int = erfc(np.sqrt(escapeE / (kb * T_e)))
         escape_sum[r] = E_int * np.sum(N_cell[r, :]) #these are the ones that leave the well from that r
-    return np.sum(escape_sum)
+    onaxis_drop = abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
+    return np.sum(escape_sum),onaxis_drop
+
+#%%
 
 # ===== ESCAPE CURVE LOOP USING KEEP_SUM METHOD ===== #
 #to be updated for consistency with new definition of compute_kept_electrons
@@ -631,6 +635,7 @@ kept_list = []
 escaped_list = []
 remaining_list = []
 frac_escaped_list = []
+drop_list = []
 
 N_initial = N_e  # total electrons at ramp start
 N_current = N_initial
@@ -656,7 +661,7 @@ for i, rampfrac in enumerate(ramp_values):
 
     # Compute number of electrons that stay trapped
     N_entering = N_current
-    N_erfc = compute_esc_electrons(fine_sol, T_e)
+    N_erfc,onaxis_drop = compute_esc_electrons(fine_sol, T_e)
     escaped_list.append(N_erfc)
 
     if i == 0:
@@ -671,8 +676,9 @@ for i, rampfrac in enumerate(ramp_values):
     frac_escaped = N_escaped / N_entering
     
     frac_escaped_list.append(frac_escaped)
-
-    print(f"Ramp {rampfrac:.3f}: frac escaped = {frac_escaped:.3e}")
+    drop_list.append(onaxis_drop)
+    
+    print(f"Ramp {rampfrac:.3f}: frac escaped = {frac_escaped:.3e}, on-axis confinement ('drop') = {onaxis_drop:.3e}")
     print(f"Escaped this step: {N_escaped:.3e}")
     print(f"Remaining after step: {N_current:.3e}")
 
@@ -685,8 +691,8 @@ for i, rampfrac in enumerate(ramp_values):
 
 plt.figure(figsize=(7, 5))
 #plt.plot(ramp_values[:len(remaining_list)], remaining_list, '-o', label="Remaining electrons")
-plt.plot(ramp_values[:len(escaped_list)], escaped_list, '-o', label="Escaped per step")
-plt.xlabel("Ramp fraction (0 = strong confinement, 1 = weak)")
+plt.plot(drop_list[:len(escaped_list)], escaped_list, '-o', label="Escaped per step")
+plt.xlabel("Confinement ('drop') in volts")
 plt.ylabel("Electrons")
 plt.yscale("log")
 plt.title("Plasma escape during ramp-down")
@@ -698,7 +704,7 @@ plt.show()
 # ===== PLOT FRACTION ESCAPED PER STEP ===== #
 
 plt.figure(figsize=(7, 5))
-plt.plot(ramp_values[:len(frac_escaped_list)], frac_escaped_list, '-o', label="Fraction escaped per step")
+plt.plot(ramp_values[:len(frac_escaped_list)], np.log(frac_escaped_list), '-o', label="Fraction escaped per step")
 plt.xlabel("Ramp fraction (0 = strong confinement, 1 = weak)")
 plt.ylabel("Fraction escaped")
 plt.title("Fraction of plasma escaped at each ramp step")
@@ -708,3 +714,8 @@ plt.tight_layout()
 plt.show()
 
 # %%
+#estimate temperature:
+    #get natural log: dnep = np.log(escaped_list[i+100]/escaped_list[i]) for some i
+    #get change in confinement: dV = drop_list[i+100]-drop_list[i]
+    #estimate slope: slope = dnep/dV
+    #compute temperature: T \approx q_e*1.05/(kb*slope)
