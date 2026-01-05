@@ -470,7 +470,6 @@ x_arange = np.linspace(0,1,10000)
 drops_interp = np.interp(x_arange, grid, drops)
 
 #%%
-
 target_drop = 10 * kb * T_e / q_e  # volts (this is 10 kT/e)
 end_drop = 0 # volts
 rampfrac_history = []             # store solutions here (append each run)
@@ -634,6 +633,7 @@ ramp_values = np.linspace(rampfrac_star, rampfrac_end, 100) # find rampfrac_end
 kept_list = []
 escaped_list = []
 remaining_list = []
+rem_list=[] #introduced as we seemed to have been plotting Nerfc vs volt drops
 frac_escaped_list = []
 drop_list = []
 
@@ -671,7 +671,7 @@ for i, rampfrac in enumerate(ramp_values):
     
     N_current = N_current - N_escaped
 
-    #escaped_list.append(N_escaped)
+    rem_list.append(N_escaped) 
     remaining_list.append(N_current)
     frac_escaped = N_escaped / N_entering
     
@@ -714,8 +714,25 @@ plt.tight_layout()
 plt.show()
 
 # %%
-#estimate temperature:
-    #get natural log: dnep = np.log(escaped_list[i+100]/escaped_list[i]) for some i
-    #get change in confinement: dV = drop_list[i+100]-drop_list[i]
-    #estimate slope: slope = dnep/dV
-    #compute temperature: T \approx q_e*1.05/(kb*slope)
+#Linear temperature estimate from escape curve using
+#equation 8 from Eggleston 1992 paper
+dnep = np.log(escaped_list[80]/escaped_list[0]) 
+dV = drop_list[80]-drop_list[0]
+slope = dnep/dV
+T_estimate = q_e*1.05/(kb*slope)
+print(f"Estimated temperature from escape curve: {T_estimate:.2f} K")
+#%%
+#Quick Check: Linear fit - but with fitting
+curvefit = np.polyfit(drop_list, np.log(escaped_list), 1)
+slope = curvefit[0]
+T_estimate2 = q_e*1.05/(kb*slope)
+print(f"Estimated temperature from escape curve (polyfit): {T_estimate2} K")
+
+plt.figure(figsize=(7, 5))
+plt.plot(drop_list, np.log(escaped_list), 'o', label="Data points")
+plt.plot(drop_list, np.polyval(curvefit, drop_list), '-', label="Linear fit")
+plt.xlabel("Confinement ('drop') in volts")
+plt.ylabel("Log(Escaped electrons)")
+plt.title("Log(Escaped electrons) vs Confinement with Linear Fit")
+plt.grid(True)
+# %%
