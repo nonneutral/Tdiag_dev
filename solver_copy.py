@@ -20,7 +20,7 @@ e0=8.854187817e-12 #farads per meter
 # Simulation Parameters
 q_e=1.60217662e-19 #electron charge in coulombs
 m_e=9.1093837e-31 #electron mass in kilograms
-T_e=1960 #plasma temperature in kelvin
+T_e=196 #plasma temperature in kelvin
 N_e=8e6 #number of electrons
 rad2=0.0002 #plasma radius in meters
 B2=1.6 #magnetic field in tesla

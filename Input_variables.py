@@ -6,7 +6,6 @@ from solver_copy import find_solution
 kb=1.38064852e-23 #Boltzmann's constant in joules per kelvin
 e0=8.854187817e-12 #farads per meter
 
-
 # plasma parameters
 T_e=1960 #plasma temperature in kelvin
 N_e=8e6 #number of electrons
