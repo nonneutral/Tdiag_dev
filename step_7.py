@@ -1,4 +1,11 @@
-from solver_copy import *
+import numpy as np
+from scipy.special import erfc
+from step_5 import find_rf_for_target_drop
+import matplotlib.pyplot as plt
+from find_solution import find_solution
+
+q_e = 1.60217662e-19  # elementary charge in coulombs
+kb = 1.38064852e-23  # Boltzmann's constant in
 
 def compute_esc_electrons(fine_sol, T_e): #, N_now, lastescapeE
     ngrid = fine_sol[0]
@@ -9,17 +16,22 @@ def compute_esc_electrons(fine_sol, T_e): #, N_now, lastescapeE
     #N_cell = N_cell*N_now/np.sum(N_cell) #normalize grid of number of e- per cell so it sums to N_now
     escape_sum = np.zeros(len(N_cell)) #len apparently returns the number of r values     escapeE = np.zeros(len(N_cell))
     print(f"sum(ngrid*volume_elements) = {np.sum(N_cell):.3f} ---")
+    
+    
     for r, x in enumerate(N_cell): 
         oneD_solution = full_scc_solution[r, :] #Solution across z-axis per radial point, r
         axial_well_idx = np.argmax(oneD_solution)
         barrier_idx = np.argmin(oneD_solution[0:axial_well_idx])  # left barrier only
+        #axial_well_idx = 17
+        #barrier_idx = 5
+        
         escapeE = q_e * abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
         E_int = erfc(np.sqrt(escapeE / (kb * T_e)))
         escape_sum[r] = E_int * np.sum(N_cell[r, :]) #these are the ones that leave the well from that r
         onaxis_drop = abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
     return np.sum(escape_sum),onaxis_drop
 
-def escape_curve_scan(start_drop, end_drop, data_points = 25, sol=None):
+def escape_curve_scan(start_drop, end_drop, data_points = 25, coarse_scan_result=np.array([None,None]), initial_voltages=None, final_voltages=None, N_e=None, T_e=None, rad2=None, B2=None, electrode_borders=None, Llim=None, Rlim=None, omega_r=None):
     """
     Docstring for escape_curve_scan
     we use the term 'drop' to refer to the potential difference between plasma center and barrier
@@ -27,14 +39,13 @@ def escape_curve_scan(start_drop, end_drop, data_points = 25, sol=None):
     :param end_drop: in volts
     :param data_points: number of data points
     """
-    if sol is None:
-        raise RuntimeError("escape_curve_scan requires a fine solution 'sol' parameter.")
-    
+
+    grid, drops = coarse_scan_result
     start_drop = start_drop # volts
     end_drop = end_drop # volts
 
-    rampfrac_start = find_rf_for_target_drop(start_drop,interp_points=10000)[0]
-    rampfrac_end = find_rf_for_target_drop(end_drop)[0]
+    rampfrac_start = find_rf_for_target_drop(start_drop,interp_points=10000, grid=grid, drops=drops)[0]
+    rampfrac_end = find_rf_for_target_drop(end_drop, grid=grid, drops=drops)[0]
     
     # ===== ESCAPE CURVE LOOP USING KEEP_SUM METHOD ===== #
     #to be updated for consistency with new definition of compute_kept_electrons
@@ -57,7 +68,16 @@ def escape_curve_scan(start_drop, end_drop, data_points = 25, sol=None):
         current_voltages = initial_voltages + (final_voltages - initial_voltages) * rampfrac
 
         # Solve for plasma configuration at this ramp
-        fine_sol = sol
+        fine_sol = find_solution(
+            NVal=N_current, T_e=T_e, fE=omega_r / (2 * np.pi),
+            mur2=rad2, B=B2,
+            electrodeConfig=(current_voltages, electrode_borders),
+            left=Llim, right=Rlim,
+            zpoints=40, rpoints=20,
+            rfact=3.0, plotting=False,
+            coarse_sol_divisor=100,
+            InitializeWithPlasmaLength=False
+        )
 
         # Compute number of electrons that stay trapped
         N_entering = N_current
@@ -87,9 +107,6 @@ def escape_curve_scan(start_drop, end_drop, data_points = 25, sol=None):
             break
     return ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list
 
-
-
-ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list = escape_curve_scan(rampfrac_start, rampfrac_end, data_points=25)
 
 #===== PLOT ESCAPE CURVE ===== #
 def plot_escape_curve(ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list):

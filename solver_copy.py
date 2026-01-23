@@ -8,6 +8,7 @@ from pylab import rcParams
 from scipy.special import erf #import error function
 from scipy.special import erfc
 
+print("--- solver_copy.py loaded ---")
 
 start_total_time = time.time()
 

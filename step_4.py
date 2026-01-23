@@ -1,6 +1,15 @@
-from solver_copy import *
+from find_solution import find_solution
+import numpy as np
 
-def step_4(N_e, T_e, omega_r, rad2, B2, initial_voltages, electrode_borders, Llim, Rlim):
+q_e = 1.60217662e-19  # elementary charge in coulombs
+kb = 1.38064852e-23  # Boltzmann's constant in joules per kelvin
+
+def retune_omega_iteration(omega_r, r_mean, r_target): #for step 4
+    r_ratio_sq = (r_mean / r_target)**2
+    omega_r_new = r_ratio_sq * omega_r
+    return omega_r_new
+
+def step_4(N_e, T_e, omega_r, rad2, B2, electrodeConfig, Llim, Rlim,zpoints,rpoints,rfact,plotting, coarse_sol_divisor):
     """
     (2)  human (eventually ML) guesses the rotation rate ω_r and 2D density profile n(r,z) for initial excitations
     (3)  coarse plasma solve (δN/N ~ 10%)
@@ -25,8 +34,8 @@ def step_4(N_e, T_e, omega_r, rad2, B2, initial_voltages, electrode_borders, Lli
         else: 
             initialse_using_pl = False
         sol = find_solution(NVal=N_e,T_e=T_e,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
-                            electrodeConfig=(initial_voltages,electrode_borders),
-                            left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=50, InitializeWithPlasmaLength = initialse_using_pl)
+                            electrodeConfig=electrodeConfig,
+                            left=Llim,right=Rlim,zpoints=zpoints,rpoints=rpoints,rfact=3.0,plotting=plotting, coarse_sol_divisor=coarse_sol_divisor, InitializeWithPlasmaLength = initialse_using_pl)
         omega_r = sol[6]
         r_mean = sol[5]     #returned rmean
         vfree = sol[4]   #returned free_space_solution

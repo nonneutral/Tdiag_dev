@@ -1,5 +1,11 @@
 
-from solver_copy import *
+import numpy as np
+import matplotlib.pyplot as plt
+
+q_e=1.60217662e-19 #elementary charge in coulombs
+kb=1.38064852e-23 #Boltzmann's constant in joules per kelvin
+
+
 
 def linear_model_T_diag(escaped_list, drop_list):
     """
@@ -31,8 +37,4 @@ def linear_model_T_diag(escaped_list, drop_list):
     plt.grid(True)
     return T_estimate2
 
-T_inferred = linear_model_T_diag(escaped_list, drop_list)
 
-print(f"\nInferred Temperature from Escape Curve: {T_inferred:.2f} K")
-print(f"Actual Temperature: {T_e:.2f} K")
-print(f"Percentage Error: {abs(T_inferred - T_e) / T_e * 100:.2f}%")
