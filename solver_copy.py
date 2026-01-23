@@ -13,17 +13,31 @@ start_total_time = time.time()
 
 rcParams['figure.figsize'] = 10, 6
 
-rw=.017 #radius of inner wall of cylindrical electrodes, in meters
-q_e=1.60217662e-19 #elementary charge in coulombs
-m_e=9.1093837e-31 #electron mass in kilograms
+# Physical Constants
 kb=1.38064852e-23 #Boltzmann's constant in joules per kelvin
 e0=8.854187817e-12 #farads per meter
+
+# Simulation Parameters
+q_e=1.60217662e-19 #electron charge in coulombs
+m_e=9.1093837e-31 #electron mass in kilograms
 T_e=1960 #plasma temperature in kelvin
 N_e=8e6 #number of electrons
 rad2=0.0002 #plasma radius in meters
 B2=1.6 #magnetic field in tesla
 freq_guess = 2.0e6  # initial guess for rotation frequency in Hz
-eps50 = 1e-3 # tolerance for rampfrac bisection
+omega_r  = 2*np.pi*freq_guess
+
+# Initial Input Values
+initial_voltages=np.array([0,-50,-10,-50,0]) #in volts
+final_voltages=np.array([0,-15,-10,-50,0], dtype=float) #in volts
+electrode_borders=[0.025,0.050,0.100,0.125] #in meters
+Llim=0.035
+Rlim=0.110
+rw=.017 #radius of inner wall of cylindrical electrodes, in meters
+rampfrac=0.9
+current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages) * rampfrac
+
+
 Mmax=1
 Nmax=20000
 zeros=[special.jn_zeros(m,Nmax) for m in range(Mmax)]
@@ -99,6 +113,12 @@ def plasma_length_guess(NVal,mur2,rw,q_e,position_map_z,free_space_solution,elec
 def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,
                   rpoints,rfact,plotting, coarse_sol_divisor, InitializeWithPlasmaLength = False,
                   fail_action='raise', debug_tag=''):
+    """
+    find_solution: solves for the equilibrium of a non-neutral plasma
+    
+    returns: ngrid,position_map_z,position_map_r,voltageGuess,free_space_solution,rmean,omega_r,volume_elements
+    """
+    
     nr=rpoints
     nz=zpoints
     omega_c=q_e*B/m_e
@@ -310,6 +330,11 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,
         plt.show()
     return ngrid,position_map_z,position_map_r,voltageGuess,free_space_solution,rmean,omega_r,volume_elements
 
+def retune_omega_iteration(omega_r, r_mean, r_target): #for step 4
+    r_ratio_sq = (r_mean / r_target)**2
+    omega_r_new = r_ratio_sq * omega_r
+    return omega_r_new
+
 """
 Main function call
 
@@ -346,85 +371,53 @@ free_space_solution: the potential of each point in the absence of charge (a mat
 rmean: average radius
 """
 
-# Initial Input Values
-initial_voltages=np.array([0,-50,-10,-50,0])
-final_voltages=np.array([0,-15,-10,-50,0], dtype=float)
-electrode_borders=[0.025,0.050,0.100,0.125]
-Llim=0.035
-Rlim=0.110
-rampfrac=0.9
-NVal=N_e
-current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages)*rampfrac
-
 #---FUNCTION TO RETUNE OMEGA_R TO HIT TARGET RADIUS; STEP 4 ON SLIDES - UPDATED 25th OCT---
-omega_r  = 2*np.pi*freq_guess
-def retune_omega_to_hit_radius(omega_r, r_mean, r_target):
-    r_ratio_sq = (r_mean / r_target)**2
-    omega_r_new = r_ratio_sq * omega_r
-    return omega_r_new
+#--- STEP 4 ---
+# We iterate to find omega_r that achieves target radius within 1% tolerance
+def find_omega_r(N_e, T_e, omega_r, rad2, B2, initial_voltages, electrode_borders, Llim, Rlim):
+    """
+    (2)  human (eventually ML) guesses the rotation rate ω_r and 2D density profile n(r,z) for initial excitations
+    (3)  coarse plasma solve (δN/N ~ 10%)
+    repeat (2)-(3) until r_p from solver is within 10% of measured r_p
 
-for _ in range(8):  #COARSE LOOP - range(number) is just number of iterations to try
-    if _ == 0:
-        initialse_using_pl = True
-    else: 
-        initialse_using_pl = False
-    sol = find_solution(NVal=N_e,T_e=T_e,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
-                        electrodeConfig=(initial_voltages,electrode_borders),
-                        left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=50, InitializeWithPlasmaLength = initialse_using_pl)
-    omega_r = sol[6]
-    r_mean = sol[5]     #returned rmean
-    vfree = sol[4]   #returned free_space_solution
-    print(f'potential-to-kT ratio: {np.max(-q_e*vfree)/(kb*T_e):0.2f}')
-    if abs(r_mean - rad2) <= 0.01 * rad2:
-        print("Desired radius achieved within 1% tolerance.")
-        break
-    omega_new = retune_omega_to_hit_radius(omega_r, r_mean, rad2) #using funciton to retune omega_r and hit traget radius.
-    if omega_new is None:
-        print("Target radius not reachable with current parameters.")
-        break
-    omega_r = omega_new
+    :param N_e: Number of particles
+    :param T_e: Temperature
+    :param omega_r: initial omega_r guess
+    :param rad2: target radius
+    :param B2: axial magnetic field
+    :param initial_voltages: initial voltages on electrodes
+    :param electrode_borders: electrode border positions
+    :param Llim: left boundary
+    :param Rlim: right boundary
+    :return: final sol with omega_r that achieves target radius within 1% tolerance or None if not reachable
+    """
+    print("---------omega_r retuning--------------------")
 
-#Unpacking coarse solution to get factors to adjust intial excitations - STEP 5 ON SLIDES
-n=sol[0]
-voltageGuess=sol[3]
-vfree=sol[4]
-maxvolt=np.max(voltageGuess)
-minvolt=np.min(voltageGuess)
-maxN=np.max(n)
-position_map_z=sol[1]
-position_map_r=sol[2]
-maxr=np.max(position_map_r)
-dr=-position_map_r[0,0]+position_map_r[1,0]
-
-z_axis = position_map_z[0, :]
-vfree_on = vfree[0, :]
-v_sc_on = voltageGuess[0, :]
-
-# 1) Index where free-space potential peaks (on-axis)
-#peak_idx = int(np.argmax(vfree_on))
-#peak_z = float(z_axis[peak_idx])
-#vfree_peak = float(vfree_on[peak_idx])
-
-# 2) Space-charge-corrected potential at that (on-axis) index
-#Peak_Space_Charge_Pot = float(voltageGuess[0, peak_idx])
-
-# 3) Space-charge-corrected potential at electrode border (on-axis)
-#idx_elec   = int(np.argmin(np.abs(z_axis - electrode_borders[1]))) 
-#z_nearest  = float(z_axis[idx_elec])
-#v_sc_near  = float(v_sc_on[idx_elec])
-
-#!!! barrier voltage is not simply the voltage at the electrode border
-#instead use the same thing as for the escape loop <--- addressed within the drop_for_rampfrac function below
-
-
-#Adjust initial_voltages so that potential drop ≈ 10 kT/e
-#!!! the voltage ramp applied to the electrodes is given: the data was taken using a known voltage ramp
-#therefore it is not meaningful to change those
-#instead, adjust the ramp frac
-#if current_drop/thermal_voltage < 10 then ramp frac is too great
-#may need to iterate (solve again)
-# --- STEP 5 RED0: Find rampfrac* such that (Peak_Space_Charge_Pot - v_sc_near) ~= 10*kB*T/q_e --- #
-
+    for _ in range(8):  #COARSE LOOP - range(number) is just number of iterations to try
+        if _ == 0:
+            initialse_using_pl = True
+        else: 
+            initialse_using_pl = False
+        sol = find_solution(NVal=N_e,T_e=T_e,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
+                            electrodeConfig=(initial_voltages,electrode_borders),
+                            left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, coarse_sol_divisor=50, InitializeWithPlasmaLength = initialse_using_pl)
+        omega_r = sol[6]
+        r_mean = sol[5]     #returned rmean
+        vfree = sol[4]   #returned free_space_solution
+        print(f'potential-to-kT ratio: {np.max(-q_e*vfree)/(kb*T_e):0.2f}')
+        if abs(r_mean - rad2) <= 0.01 * rad2:
+            print("Desired radius achieved within 1% tolerance.")
+            break
+        omega_new = retune_omega_iteration(omega_r, r_mean, rad2) #using funciton to retune omega_r and hit traget radius.
+        if omega_new is None:
+            print("Target radius not reachable with current parameters.")
+            break
+        omega_r = omega_new
+    
+    print("--- omega_r retuning complete ---")
+    return sol
+#--- STEP 5 ---
+# We scan rampfrac to map rampfrac to drop. We use linear interpolation to speed up finding rampfrac for target drop.
 def drop_for_rampfrac(rf, omega_r_use): # finds "drop", i.e. potential difference between plasma and barrier, for a given rampfrac
     
     volts = np.array(initial_voltages) + (np.array(final_voltages) - np.array(initial_voltages)) * rf # volts along the ramp
@@ -455,154 +448,113 @@ def drop_for_rampfrac(rf, omega_r_use): # finds "drop", i.e. potential differenc
         
 
     return drop, volts, sol_tmp
+def coarse_scan(scan_points=21):
+    grid = np.linspace(0.0, 1, scan_points) # 21 is number of points to scan arbitrarily chosen
+    drops = []
+    for rf in grid:
+        d, _, _ = drop_for_rampfrac(rf, omega_r)
+        drops.append(d)
 
-# coarse scan to find a bracket (or at least a good start)
-grid = np.linspace(0.0, 1, 21) # 21 is number of points to scan arbitrarily chosen
-drops = []
-for rf in grid:
-    d, _, _ = drop_for_rampfrac(rf, omega_r)
-    drops.append(d)
+    drops = np.array(drops)
+    x_arange = np.linspace(0,1,10000)
+    drops_interp = np.interp(x_arange, grid, drops)
 
 
-drops = np.array(drops)
-
-x_arange = np.linspace(0,1,10000)
-drops_interp = np.interp(x_arange, grid, drops)
-
-#%%
-target_drop = 10 * kb * T_e / q_e  # volts (this is 10 kT/e)
-end_drop = 0 # volts
-rampfrac_history = []             # store solutions here (append each run)
-
-plt.title("drop vs rampfracs coarse scan with interpolation")
-plt.plot(grid, drops,"o", label="coarse scan")
-plt.plot(x_arange, drops_interp, "-", label="interp_points = 10000")
-plt.hlines(target_drop, 0,1, label="target drop", colors='red')
-plt.legend()
-plt.show()
-
+    plt.title("drop vs rampfracs coarse scan with interpolation")
+    plt.plot(grid, drops,"o", label="coarse scan")
+    plt.plot(x_arange, drops_interp, "-", label="interp_points = 10000")
+    plt.legend()
+    plt.show()
+    return np.array([grid, drops])
 def find_rf_for_target_drop(target_drop,interp_points=10000):
+    """
+    finds rampfrac such that drop_for_rampfrac(rampfrac*) == target_drop using linear interpolation method
+    
+    returns: (rampfrac where target_drop is reached, achieved_drop)
+    """
+    print("find_rf_for_target_drop")
+    if grid is None or drops is None:
+        raise RuntimeError("coarse scan data not available; run coarse_scan() first.")
+
     x_arange = np.linspace(0,1,interp_points)
     drops_interp = np.interp(x_arange, grid, drops)
     rf_star = x_arange[np.argmin(abs(drops_interp - target_drop))]
     achieved_drop = drops_interp[np.argmin(drops_interp - target_drop)]
-    return rf_star, achieved_drop
 
-rampfrac_star = find_rf_for_target_drop(target_drop,interp_points=10000)[0]
-achieved_drop = find_rf_for_target_drop(end_drop,interp_points=10000)[1]
+    return np.array([rf_star, achieved_drop])
+print("--- Performing coarse scan to map rampfrac to drop ---")
+grid, drops = coarse_scan(scan_points=21)
+# --- STEP 6 ---
+# We input target drop and get fine solution at that drop
+def find_fine_solution(NVal,T_e,fE,mur2,B,target_drop,left,right,zpoints,
+                  rpoints,rfact=3.0,plotting=True, coarse_sol_divisor=100, grid=None, drops=None):
+    """
+    Plasma solution with retuned omega_r based on target radius (rad2) 
+    and rampfrac based on target potential drop.
+    """
+    print("--- STEP 4 ---")
+    omega_r = find_omega_r(NVal, T_e, fE, mur2, B, initial_voltages, electrode_borders, left, right)[6]
+    
+    print("--- STEP 5 ---")
+    rf_star = find_rf_for_target_drop(target_drop)[0]
+    
+    current_voltages = np.array(initial_voltages) + (np.array(final_voltages) - np.array(initial_voltages)) * rf_star
+    
+    print("--- Finding fine solution---")
+    fine_sol = find_solution(
+        NVal, T_e, fE=omega_r/(2*np.pi), mur2=mur2, B=B, 
+        electrodeConfig=(current_voltages, electrode_borders),
+        left=left, right=right,
+        zpoints=zpoints, rpoints=rpoints, rfact=rfact,
+        plotting=plotting, coarse_sol_divisor=coarse_sol_divisor,
+        InitializeWithPlasmaLength=False,
+        fail_action='raise', debug_tag='fine_solution'
+    )
+    print("---Fine solution found---")
+    return fine_sol
+# Input Target drop
+target_drop_eg = 10 * kb * T_e / q_e  # volts (this is 10 kT/e)
+fine_sol = find_fine_solution(N_e, T_e, omega_r, rad2, B2, target_drop_eg, Llim, Rlim, zpoints=80, rpoints=40, rfact=3.0, plotting=True, coarse_sol_divisor=100)
+#print(f'Now proceeding to fine solution where the potential drops to {achieved_drop/(kb*T_e/q_e):.2f} kT/e .') 
+#fine_sol=find_solution(NVal=N_e,T_e=T_e,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
+#                      electrodeConfig=(current_voltages,electrode_borders),
+#                      left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, 
+#                      coarse_sol_divisor=100, InitializeWithPlasmaLength=False)
+def plot_density(sol):
 
-print(rampfrac_star)
-print(achieved_drop)
+    fine_sol = sol
+    n=fine_sol[0]
+    voltageGuess=fine_sol[3]
+    vfree=fine_sol[4]
+    maxvolt=np.max(voltageGuess)
+    minvolt=np.min(voltageGuess)
+    maxN=np.max(n)
+    position_map_z=fine_sol[1]
+    position_map_r=fine_sol[2]
+    maxr=np.max(position_map_r)
+    dr=-position_map_r[0,0]+position_map_r[1,0]
 
-rampfrac_end = find_rf_for_target_drop(0)[0]
-#%%
-"""
-# if reachable, bracket around target
-idx_sorted = np.argsort(np.abs(drops - target_drop))
-best_idx = int(idx_sorted[0])
-best_rf  = float(grid[best_idx])
-best_drop = float(drops[best_idx])
+    #---END OF ADDED UPDATES---
 
-# try to find a sign-change bracket in the grid (assumes roughly monotonic)
-bracket = None
-for i in range(len(grid) - 1):
-    if (drops[i] - target_drop) * (drops[i+1] - target_drop) <= 0:
-        bracket = (float(grid[i]), float(grid[i+1]))
-        break
+    fig = plt.figure(figsize=(12, 8))
+    ax = fig.add_subplot(111, projection='3d') 
+    ax.set_zlim([-.5e+2,maxN*1.2])
+    plt.title("plasma density")
+    ax.plot_surface( np.flip(position_map_z,0),  position_map_r, np.flip(n,0),cmap=cm.coolwarm, linewidth=0, antialiased=False)    
+    ax.set_yticks([maxr+dr,maxr+dr-.001,maxr+dr-.002])
+    ax.set_yticklabels(["0","1","2"])
+    ax.set_ylabel("r (mm)")
+    ax.set_xlabel("z (m)")
+    ax.set_zlabel("rho (N/m^3)")
+    plt.show()
 
-if bracket is None:
-    # Not bracketed -> just take closest scan point
-    rampfrac_star = best_rf
-    achieved_drop = best_drop
-else:
+plot_density(fine_sol)
 
-    lo, hi = bracket
-    # bisection refine (no extra imports)
-    for _ in range(15):
-        mid = 0.5 * (lo + hi)
-        dmid, _, _ = drop_for_rampfrac(mid, omega_r)
-        if np.abs(dmid - target_drop) <= eps50:
-            lo = hi = mid
-            break
-        # choose side that contains the target
-        dlo, _, _ = drop_for_rampfrac(lo, omega_r)
-        if (dlo - target_drop) * (dmid - target_drop) <= 0:
-            hi = mid
-        else:
-            lo = mid
-    rampfrac_star = 0.5 * (lo + hi)
-    achieved_drop, _, _ = drop_for_rampfrac(rampfrac_star, omega_r)
-
-
-
-    achieved_drop, _, _ = drop_for_rampfrac(rampfrac_star, omega_r)
-rampfrac_history.append(rampfrac_star)
-"""
-
-print(f"\n[Rampfrac Tuning] target drop = {target_drop:.3f} V")
-print(f"[Rampfrac Tuning] rampfrac* = {rampfrac_star:.4f}, achieved drop = {achieved_drop:.3f} V")
-
-# Use the found rampfrac for the fine solution
-current_voltages = np.array(initial_voltages) + (np.array(final_voltages) - np.array(initial_voltages)) * rampfrac_star
-
-#%%
-#--------SOLVING FOR FINE SOLUTION - STEP 6 ON SLIDES--------#
-print('Now proceeding to fine solution where the potential drops to 10kT/e.') 
-fine_sol=find_solution(NVal=N_e,T_e=T_e,fE=omega_r/(2*np.pi),mur2=rad2,B=B2,
-                      electrodeConfig=(current_voltages,electrode_borders),
-                      left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True, 
-                      coarse_sol_divisor=100, InitializeWithPlasmaLength=False)
-
-n=fine_sol[0]
-voltageGuess=fine_sol[3]
-vfree=fine_sol[4]
-maxvolt=np.max(voltageGuess)
-minvolt=np.min(voltageGuess)
-maxN=np.max(n)
-position_map_z=fine_sol[1]
-position_map_r=fine_sol[2]
-maxr=np.max(position_map_r)
-dr=-position_map_r[0,0]+position_map_r[1,0]
-
-#---END OF ADDED UPDATES---
-
-fig = plt.figure(figsize=(12, 8))
-ax = fig.add_subplot(111, projection='3d') 
-ax.set_zlim([-.5e+2,maxN*1.2])
-plt.title("plasma density")
-ax.plot_surface( np.flip(position_map_z,0),  position_map_r, np.flip(n,0),cmap=cm.coolwarm, linewidth=0, antialiased=False)    
-ax.set_yticks([maxr+dr,maxr+dr-.001,maxr+dr-.002])
-ax.set_yticklabels(["0","1","2"])
-ax.set_ylabel("r (mm)")
-ax.set_xlabel("z (m)")
-ax.set_zlabel("rho (N/m^3)")
-plt.show()
 end_total_time = time.time()
 print(f"\nTotal execution time: {end_total_time - start_total_time:.2f} seconds")
 
-print(n)
-    
-#%%
-
-#def compute_kept_electrons(fine_sol, T_e): #, N_now, lastescapeE
-#    ngrid = fine_sol[0]
-#    full_scc_solution = fine_sol[3] #Full Space-Charge-Corrected (SCC) Solution, i.e. voltageGuess
-#    #position_map_z = fine_sol[1]
-#    volume_elements = fine_sol[7]
-#    N_cell = ngrid * volume_elements
-#    N_cell = N_cell*N_now/np.sum(N_cell) #normalize grid of number of e- per cell so it sums to N_now
-#    escape_sum = np.zeros(len(N_cell)) #len apparently returns the number of r values
-#    escapeE = np.zeros(len(N_cell))
-#    print(f"sum(ngrid*volume_elements) = {np.sum(N_cell):.3f} ---")
-#    for r, x in enumerate(N_cell): 
-#        oneD_solution = full_scc_solution[r, :] #Solution across z-axis per radial point, r
-#        axial_well_idx = np.argmax(oneD_solution)
-#        barrier_idx = np.argmin(oneD_solution)
-#        escapeE[r] = q_e * abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
-#        E_int = erf(np.sqrt(lastescapeE[r] / (kb * T_e))) - erf(np.sqrt(escapeE[r] / (kb * T_e)))
-#        escape_sum[r] = E_int * np.sum(N_cell[r, :]) #these are the ones that leave the well from that r
-#    return np.sum(escape_sum),escapeE
-#%%    
+#--- STEP 7 ---
+#--------ESCAPE CURVE SCAN - STEP 7 ON SLIDES--------#
 def compute_esc_electrons(fine_sol, T_e): #, N_now, lastescapeE
     ngrid = fine_sol[0]
     full_scc_solution = fine_sol[3] #Full Space-Charge-Corrected (SCC) Solution, i.e. voltageGuess
@@ -619,120 +571,143 @@ def compute_esc_electrons(fine_sol, T_e): #, N_now, lastescapeE
         escapeE = q_e * abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
         E_int = erfc(np.sqrt(escapeE / (kb * T_e)))
         escape_sum[r] = E_int * np.sum(N_cell[r, :]) #these are the ones that leave the well from that r
-    onaxis_drop = abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
+        onaxis_drop = abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx])
     return np.sum(escape_sum),onaxis_drop
-
-#%%
-
-# ===== ESCAPE CURVE LOOP USING KEEP_SUM METHOD ===== #
-#to be updated for consistency with new definition of compute_kept_electrons
-ramp_values = np.linspace(rampfrac_star, rampfrac_end, 100) # find rampfrac_end 
-#!!! instead of hard-coding this linspace, make it go from rampfrac equiv of 20 kT/e to 0 kT/e
-#you can do this by finding the points for 20 kT/e and 10 kT/e and extrapolating
-
-kept_list = []
-escaped_list = []
-remaining_list = []
-rem_list=[] #introduced as we seemed to have been plotting Nerfc vs volt drops
-frac_escaped_list = []
-drop_list = []
-
-N_initial = N_e  # total electrons at ramp start
-N_current = N_initial
-
-for i, rampfrac in enumerate(ramp_values):
-    print(f"\n--- Rampfrac = {rampfrac:.3f} ---")
-    print(f"Electrons entering this step: {N_current:.3e}")
-
-    # Update electrode voltages based on ramp fraction
-    current_voltages = initial_voltages + (final_voltages - initial_voltages) * rampfrac
-
-    # Solve for plasma configuration at this ramp
-    fine_sol = find_solution(
-        NVal=N_current, T_e=T_e, fE=omega_r / (2 * np.pi),
-        mur2=rad2, B=B2,
-        electrodeConfig=(current_voltages, electrode_borders),
-        left=Llim, right=Rlim,
-        zpoints=40, rpoints=20,
-        rfact=3.0, plotting=False,
-        coarse_sol_divisor=100,
-        InitializeWithPlasmaLength=False
-    )
-
-    # Compute number of electrons that stay trapped
-    N_entering = N_current
-    N_erfc,onaxis_drop = compute_esc_electrons(fine_sol, T_e)
-    escaped_list.append(N_erfc)
-
-    if i == 0:
-        N_escaped = 0
-    else:
-        N_escaped = escaped_list[i] - escaped_list[i - 1]
+def escape_curve_scan(rampfrac_start, rampfrac_end, data_points = 25):
     
-    N_current = N_current - N_escaped
+    # ===== ESCAPE CURVE LOOP USING KEEP_SUM METHOD ===== #
+    #to be updated for consistency with new definition of compute_kept_electrons
+    ramp_values = np.linspace(rampfrac_start, rampfrac_end, data_points) # find rampfrac_end 
+    #!!! instead of hard-coding this linspace, make it go from rampfrac equiv of 20 kT/e to 0 kT/e
+    #you can do this by finding the points for 20 kT/e and 10 kT/e and extrapolating
 
-    rem_list.append(N_escaped) 
-    remaining_list.append(N_current)
-    frac_escaped = N_escaped / N_entering
-    
-    frac_escaped_list.append(frac_escaped)
-    drop_list.append(onaxis_drop)
-    
-    print(f"Ramp {rampfrac:.3f}: frac escaped = {frac_escaped:.3e}, on-axis confinement ('drop') = {onaxis_drop:.3e}")
-    print(f"Escaped this step: {N_escaped:.3e}")
-    print(f"Remaining after step: {N_current:.3e}")
+    escaped_list = []
+    remaining_list = []
+    frac_escaped_list = []
+    drop_list = []
 
-    if N_current < 1:
-        print("Plasma fully escaped — stopping early.")
-        break
+    N_current = N_e  # total electrons at ramp start
 
+    for i, rampfrac in enumerate(ramp_values):
+        print(f"\n--- Rampfrac = {rampfrac:.3f} ---")
+        print(f"Electrons entering this step: {N_current:.3e}")
 
-#%% ===== PLOT ESCAPE CURVE ===== #
+        # Update electrode voltages based on ramp fraction
+        current_voltages = initial_voltages + (final_voltages - initial_voltages) * rampfrac
 
-plt.figure(figsize=(7, 5))
-#plt.plot(ramp_values[:len(remaining_list)], remaining_list, '-o', label="Remaining electrons")
-plt.plot(drop_list[:len(escaped_list)], escaped_list, '-o', label="Escaped per step")
-plt.xlabel("Confinement ('drop') in volts")
-plt.ylabel("Electrons")
-plt.yscale("log")
-plt.title("Plasma escape during ramp-down")
-plt.grid(True)
-plt.legend()
-plt.tight_layout()
-plt.show()
+        # Solve for plasma configuration at this ramp
+        fine_sol = find_solution(
+            NVal=N_current, T_e=T_e, fE=omega_r / (2 * np.pi),
+            mur2=rad2, B=B2,
+            electrodeConfig=(current_voltages, electrode_borders),
+            left=Llim, right=Rlim,
+            zpoints=40, rpoints=20,
+            rfact=3.0, plotting=False,
+            coarse_sol_divisor=100,
+            InitializeWithPlasmaLength=False
+        )
+
+        # Compute number of electrons that stay trapped
+        N_entering = N_current
+        N_erfc,onaxis_drop = compute_esc_electrons(fine_sol, T_e)
+        escaped_list.append(N_erfc)
+
+        if i == 0:
+            N_escaped = 0
+        else:
+            N_escaped = escaped_list[i] - escaped_list[i - 1]
+        
+        N_current = N_current - N_escaped
+
+        #escaped_list.append(N_escaped)
+        remaining_list.append(N_current)
+        frac_escaped = N_escaped / N_entering
+        
+        frac_escaped_list.append(frac_escaped)
+        drop_list.append(onaxis_drop)
+        
+        print(f"Ramp {rampfrac:.3f}: frac escaped = {frac_escaped:.3e}, on-axis confinement ('drop') = {onaxis_drop:.3e}")
+        print(f"Escaped this step: {N_escaped:.3e}")
+        print(f"Remaining after step: {N_current:.3e}")
+
+        if N_current < 1:
+            print("Plasma fully escaped — stopping early.")
+            break
+    return ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list
+
+start_drop = 10*kb*T_e/q_e  # volts (this is 10 kT/e)
+end_drop = 0 # volts
+
+rampfrac_start = find_rf_for_target_drop(start_drop,interp_points=10000)[0]
+rampfrac_end = find_rf_for_target_drop(end_drop)[0]
+
+ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list = escape_curve_scan(rampfrac_start, rampfrac_end, data_points=25)
+
+#===== PLOT ESCAPE CURVE ===== #
+def plot_escape_curve(ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list):
+
+    plt.figure(figsize=(7, 5))
+    #plt.plot(ramp_values[:len(remaining_list)], remaining_list, '-o', label="Remaining electrons")
+    plt.plot(drop_list[:len(escaped_list)], escaped_list, '-o', label="Escaped per step")
+    plt.xlabel("Confinement ('drop') in volts")
+    plt.ylabel("Electrons")
+    plt.yscale("log")
+    plt.title("Plasma escape during ramp-down")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
 
 # ===== PLOT FRACTION ESCAPED PER STEP ===== #
 
-plt.figure(figsize=(7, 5))
-plt.plot(ramp_values[:len(frac_escaped_list)], np.log(frac_escaped_list), '-o', label="Fraction escaped per step")
-plt.xlabel("Ramp fraction (0 = strong confinement, 1 = weak)")
-plt.ylabel("Fraction escaped")
-plt.title("Fraction of plasma escaped at each ramp step")
-plt.grid(True)
-plt.legend()
-plt.tight_layout()
-plt.show()
+    plt.figure(figsize=(7, 5))
+    plt.plot(ramp_values[:len(frac_escaped_list)], np.log(frac_escaped_list), '-o', label="Fraction escaped per step")
+    plt.xlabel("Ramp fraction (0 = strong confinement, 1 = weak)")
+    plt.ylabel("Fraction escaped")
+    plt.title("Fraction of plasma escaped at each ramp step")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
 
-# %%
-#Linear temperature estimate from escape curve using
-#equation 8 from Eggleston 1992 paper
-dnep = np.log(escaped_list[80]/escaped_list[0]) 
-dV = drop_list[80]-drop_list[0]
-slope = dnep/dV
-T_estimate = q_e*1.05/(kb*slope)
-print(f"Estimated temperature from escape curve: {T_estimate:.2f} K")
-#%%
-#Quick Check: Linear fit - but with fitting
-curvefit = np.polyfit(drop_list, np.log(escaped_list), 1)
-slope = curvefit[0]
-T_estimate2 = q_e*1.05/(kb*slope)
-print(f"Estimated temperature from escape curve (polyfit): {T_estimate2} K")
+plot_escape_curve(ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list)
 
-plt.figure(figsize=(7, 5))
-plt.plot(drop_list, np.log(escaped_list), 'o', label="Data points")
-plt.plot(drop_list, np.polyval(curvefit, drop_list), '-', label="Linear fit")
-plt.xlabel("Confinement ('drop') in volts")
-plt.ylabel("Log(Escaped electrons)")
-plt.title("Log(Escaped electrons) vs Confinement with Linear Fit")
-plt.grid(True)
+# --- STEP 8 ---
+#%% Estimate temperature from escape curve
+
+def linear_model_T_diag(escaped_list, drop_list):
+    """
+    Linear fit model for temperature estimation from escape curve data.
+    
+    :param escape_list: List of escaped electrons at each drop
+    :param drop_list: List of confinement ('drop') values in volts
+    :return: Estimated temperature in Kelvin
+    """
+    #Linear temperature estimate from escape curve using
+    #equation 8 from Eggleston 1992 paper
+    dnep = np.log(escaped_list[-1]/escaped_list[0]) 
+    dV = drop_list[-1]-drop_list[0]
+    slope = dnep/dV
+    T_estimate = -q_e*1.05/(kb*slope)
+    print(f"Estimated temperature from escape curve: {T_estimate:.2f} K")
+    #Quick Check: Linear fit - but with fitting
+    curvefit = np.polyfit(drop_list, np.log(escaped_list), 1)
+    slope = curvefit[0]
+    T_estimate2 = -q_e*1.05/(kb*slope)
+    print(f"Estimated temperature from escape curve (polyfit): {T_estimate2} K")
+
+    plt.figure(figsize=(7, 5))
+    plt.plot(drop_list, np.log(escaped_list), 'o', label="Data points")
+    plt.plot(drop_list, np.polyval(curvefit, drop_list), '-', label="Linear fit")
+    plt.xlabel("Confinement ('drop') in volts")
+    plt.ylabel("Log(Escaped electrons)")
+    plt.title("Log(Escaped electrons) vs Confinement with Linear Fit")
+    plt.grid(True)
+    return T_estimate2
+
+T_inferred = linear_model_T_diag(escaped_list, drop_list)
+
+print(f"\nInferred Temperature from Escape Curve: {T_inferred:.2f} K")
+print(f"Actual Temperature: {T_e:.2f} K")
+print(f"Percentage Error: {abs(T_inferred - T_e) / T_e * 100:.2f}%")
 # %%
