@@ -147,7 +147,7 @@ def auto_roi_from_dip(
         i_right += 1
 
     # Pad a bit so ROI isn't too tight
-    i_left = max(0, i_left - pad_points - 500)
+    i_left = max(0, i_left - pad_points - 500) # some extra region for roi
     i_right = min(n - 1, i_right + pad_points)
 
     mask = np.zeros(n, dtype=bool)
@@ -187,7 +187,7 @@ def fit_and_convert_u8(filename):
     plt.xlabel("u8 Excitation Value")
     plt.ylabel("SiPM Signal (~Escape Rate)")
     plt.grid(True, linestyle='--', alpha=0.7)
-    plt.xlim(xL,xR)
+    #plt.xlim(xL,xR)
     plt.tight_layout()
     plt.show()
 
@@ -203,11 +203,4 @@ def fit_and_convert_u8(filename):
     #as the converted_voltages that will substitute the u8 "input" in electrodeConfig arg.
     
 #%% - TEST RUN
-
-filename = '/Users/wanse/OneDrive/Documents/GitHub/Tdiag_dev/Dec13/173026.977.csv'
-fit_and_convert_u8(filename)
-# %%
-
-#   for _ in file_list:
-#       make a code that loads all the files in Dec13 folder 
-#       run the code to find all the ROI and fit to the list of files
+fit_and_convert_u8('/Users/rupgango/Downloads/Dec13/134414.747.csv')
