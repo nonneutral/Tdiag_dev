@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from scipy import special
 from scipy.signal import savgol_filter
 from find_solution import getFiniteSolution
+import os
 #from solver import getFiniteSolution - commented out to prevent solver running here
 
 #%%
@@ -84,7 +85,14 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
 
     for electrode in electrodes:
         free_space_solution+=electrode(position_map_r,position_map_z)
-    return free_space_solution
+    
+    axial_profile = np.max(free_space_solution, axis=0)
+    peak_idx = np.argmax(axial_profile)
+    peak = axial_profile[peak_idx]
+    barrier = np.min(axial_profile[:peak_idx])
+    VoltageDrop = peak - barrier
+    print(f"Calculated Voltage Drop: {VoltageDrop} V")
+    return VoltageDrop
 
 #%%
 def auto_roi_from_dip(
@@ -99,7 +107,7 @@ def auto_roi_from_dip(
     """
     This is the Automatic ROI detection that we'll use in the next funciton.
     Inputs: x (np.array), y (np.array), various parameters for smoothing and thresholding
-    Returns: mask (bool array), x_left, x_right, (i_left, i_right), baseline, robust_sigma
+    Returns: mask (bool array), x_left, x_right, (i_left, i_right), baseline, robust_sigma, thr_high, thr_low
     """
     x = np.asarray(x)
     y = np.asarray(y)
@@ -153,7 +161,7 @@ def auto_roi_from_dip(
     mask = np.zeros(n, dtype=bool)
     mask[i_left:i0+1] = True
     
-    return mask, x[i_left], x[i0], (i_left, i_right), baseline, robust_sigma
+    return mask, x[i_left], x[i0], (i_left, i_right), baseline, robust_sigma, thr_high, thr_low
 
 #%%
 def fit_and_convert_u8(filename):
@@ -173,8 +181,8 @@ def fit_and_convert_u8(filename):
 
     sipm_data = df[0].values  #sipm (~escape rate)
     u8_data = df[1].values    #u8 excitations
-    
-    mask, xL, xR, (iL, iR), baseline, sig = auto_roi_from_dip(u8_data, sipm_data) #Auto-detect ROI around dip
+
+    mask, xL, xR, (iL, iR), baseline, sig, thr_high, thr_low = auto_roi_from_dip(u8_data, sipm_data) #Auto-detect ROI around dip
 
     #Plotting Section
     plt.figure(figsize=(10, 6))
@@ -191,16 +199,72 @@ def fit_and_convert_u8(filename):
     plt.tight_layout()
     plt.show()
 
-    # ROI data for next step (fit + mapping)
-    u8_roi = np.sort(u8_data)[iL:iR+1] if xL is not None else np.array([])
-    sipm_roi = np.sort(sipm_data[np.argsort(u8_data)])[iL:iR+1] if xL is not None else np.array([])
-    
-    return u8_data, sipm_data, (xL, xR), u8_roi, sipm_roi #pre-lim retunr for test run
+    #Fitting Section
+    u8_roi = u8_data[mask]
+    sipm_roi = sipm_data[mask]
+    order = np.argsort(u8_roi) #for isolating linear section from padded ROI
+    u = u8_roi[order]
+    s = sipm_roi[order]
+    ds = np.abs(np.diff(s)) #look at CONSECUTIVE differences to find baseline end
+    n_base = max(5, int(0.1 * len(ds)))   #first 10% or at least 5 points have baseline, so use that to estimate noise in this region
+    baseline_noise = np.median(ds[:n_base])
+    factor=5.0        #how much larger than baseline counts as "real"
+    run_length=7      #how many consecutive points above threshold to confirm end of baseline
 
-    #Next Next Step: fit the sipm vs u8 data to get a functional form for u8;
+    start_idx = None
+    for i in range(len(ds) - run_length):
+        if np.all(ds[i:i+run_length] > factor * baseline_noise):
+            start_idx = i + 1   # +1 because diff shifts index
+            break
+
+    if start_idx is None:
+        raise RuntimeError("Could not detect end of baseline.")
+
+    u8_roi_for_fit = u[start_idx:]
+    sipm_roi_for_fit = s[start_idx:]
+
+    if len(u8_roi_for_fit) < 2:
+        raise RuntimeError("Not enough points for linear fit.") #Just failsafe
+
+    m, b = np.polyfit(u8_roi_for_fit, sipm_roi_for_fit, 1) 
+
+    #Fit Plotting Section
+    plt.figure(figsize=(10, 6))
+    plt.plot(u, s, '.', alpha=0.3, label="ROI (all)")
+    plt.plot(u8_roi_for_fit, sipm_roi_for_fit, 'o',
+            color='orange', markersize=4, label="Linear region")
+
+    u_fit = np.linspace(u8_roi_for_fit.min(), u8_roi_for_fit.max(), 200)
+    plt.plot(u_fit, m * u_fit + b, 'r-', linewidth=2,
+            label=f"Fit: y = {m:.3g} x + {b:.3g}")
+
+    plt.title("SiPM vs u8 — Linear Region After Baseline")
+    plt.xlabel("u8 Excitation Value (ROI)")
+    plt.ylabel("SiPM Signal (~Escape Rate)")
+    plt.legend()
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.show()
     
-    #Final step for this function: Now do the conversion to voltages within this ROI and return 
-    #as the converted_voltages that will substitute the u8 "input" in electrodeConfig arg.
+    #convert to volatges
+    converted_volatges = u_fit * 15
+    return converted_volatges, u8_roi_for_fit, sipm_roi_for_fit, m, b  #pre-lim return for test run
+
+    #Next Next Step: fit the sipm vs u8 data to get a functional form for u8 - use the roi to fit a line to the linear map,
+    #then use that as input for electrodeConfig in getElectrodeVoltageDrop to get the voltage drop. <--- should be done now.
     
+    #Final step for this function: substitute the volatges in as one of the electrodeConfig arg along with borders as the other.
+
 #%% - TEST RUN
-fit_and_convert_u8('/Users/rupgango/Downloads/Dec13/134414.747.csv')
+fit_and_convert_u8('/Users/rupgango/Downloads/Dec13/133632.813.csv')
+
+#general cross-platform code for processing all files in a directory - but commneted out for testing atm.
+'''
+folder = "/Users/rupgango/Downloads/Dec13"
+
+for fname in os.listdir(folder):
+    if fname.lower().endswith(".csv"):
+        filepath = os.path.join(folder, fname)
+        print(f"\nProcessing: {filepath}")
+        fit_and_convert_u8(filepath)
+        '''
