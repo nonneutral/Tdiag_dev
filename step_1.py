@@ -7,6 +7,12 @@ from find_solution import getFiniteSolution
 import os
 #from solver import getFiniteSolution - commented out to prevent solver running here
 
+Llim=0.035
+Rlim=0.110
+rad2=0.0002 #plasma radius in meters
+kb=1.38064852e-23 #Boltzmann's constant in joules per kelvin
+qe=1.60217662e-19 #elementary charge in coulombs
+
 #%%
 '''
 def process_and_plot(filename):
@@ -50,7 +56,7 @@ voltages, sipm = process_and_plot('/Users/rupgango/Downloads/Dec13/134414.747.cs
 '''
 
 #%%
-def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2, rfact):
+def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2, rfact): #used in final_SiPM_vs_VoltagePlot
     ''' Gets the combined Electrode "Excitement/Voltage Drop" Profile 
         without having to run the solver.
         
@@ -96,72 +102,64 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
 
 #%%
 def auto_roi_from_dip(
-    x, y, 
-    smooth_window=101,    #must be odd; will be adjusted if too big
+    x, y,
+    smooth_window=101,
     polyorder=3,
-    baseline_quantile=0.90,  #baseline from top 10% of (smoothed) values
-    sigma_low=6.0,        #how far below baseline counts as “in dip”
-    sigma_high=2.5,       #hysteresis: when we say we've “returned” to baseline
-    pad_points=10         #expand ROI a bit after detection
-):
-    """
-    This is the Automatic ROI detection that we'll use in the next funciton.
-    Inputs: x (np.array), y (np.array), various parameters for smoothing and thresholding
-    Returns: mask (bool array), x_left, x_right, (i_left, i_right), baseline, robust_sigma, thr_high, thr_low
-    """
+    baseline_quantile=0.90,
+    sigma_low=3.5,     
+    sigma_high=2.0,    
+    prepad=500,        # how many points BEFORE the dip edge to include (time)
+    ): #used in fit_and_convert_u8
     x = np.asarray(x)
     y = np.asarray(y)
-    order = np.argsort(x) #Sort by x (important if the file isn't ordered) - sort of failsafe.
-    x = x[order]
-    y = y[order]
 
     n = len(y)
     if n < 10:
-        raise ValueError("Not enough points for ROI detection.") #Fail-safe 1 - just file check
+        raise ValueError("Not enough points for ROI detection.")
 
-    w = min(smooth_window, n - (1 - (n % 2)))  #Fail safe 2 and housekeeping - window must be odd and <= n for savgol to function
+    w = min(smooth_window, n - (1 - (n % 2))) #make sure window is odd and <= n - sort of failsafe
     if w < 5:
         y_s = y.copy()
     else:
         if w % 2 == 0:
             w -= 1
-        y_s = savgol_filter(y, window_length=w, polyorder=min(polyorder, w-1)) #this function fits a polynomial over windowed segment
+        y_s = savgol_filter(y, window_length=w, polyorder=min(polyorder, w-1))
 
-    baseline = np.quantile(y_s, baseline_quantile) #Baseline estimate from high quantile
+    baseline = np.quantile(y_s, baseline_quantile)
 
-    med = np.median(y_s)
-    mad = np.median(np.abs(y_s - med)) #Median Absolute Deviation
-    robust_sigma = 1.4826 * mad if mad > 0 else (np.std(y_s) + 1e-12) #Noise estimation; Fallback to std if MAD=0
+    #NEW DEFINITION OF SIGMA
+    hi = y_s[y_s >= baseline]
+    if len(hi) > 20:
+        med = np.median(hi)
+        mad = np.median(np.abs(hi - med))
+        sigma = 1.4826 * mad if mad > 0 else (np.std(hi) + 1e-12)
+    else:
+        med = np.median(y_s)
+        mad = np.median(np.abs(y_s - med))
+        sigma = 1.4826 * mad if mad > 0 else (np.std(y_s) + 1e-12)
 
-    #Thresholds
-    thr_low  = baseline - sigma_low  * robust_sigma #baseline - 6(sigma)
-    thr_high = baseline - sigma_high * robust_sigma #baseline - 2.5(sigma)
+    i0 = int(np.argmin(y_s))
 
-    i0 = int(np.argmin(y_s)) #Index of global minimum
+    thr_low  = baseline - sigma_low  * sigma   # must cross this to count as dip
+    thr_high = baseline - sigma_high * sigma   # hysteresis to find edges
 
-    # If there's basically no dip, then fail - fail-safe 3
+    #If no dip detected then fail - failsafe 3
     if y_s[i0] > thr_low:
-        # nothing significantly below baseline
-        mask = np.zeros_like(y, dtype=bool)
-        return mask, None, None, (None, None), baseline, robust_sigma
+        mask = np.zeros(n, dtype=bool)
+        return mask, None, None, (None, None), baseline, sigma, thr_high, thr_low
 
-    #Expand left/right from minimum with hysteresis
+    #Expand from minimum to find dip edges
     i_left = i0
     while i_left > 0 and y_s[i_left] < thr_high:
         i_left -= 1
 
-    i_right = i0
-    while i_right < n - 1 and y_s[i_right] < thr_high:
-        i_right += 1
-
-    # Pad a bit so ROI isn't too tight
-    i_left = max(0, i_left - pad_points - 500) # some extra region for roi
-    i_right = min(n - 1, i_right + pad_points)
+    #Pad in TIME
+    i_left = max(0, i_left - prepad)
 
     mask = np.zeros(n, dtype=bool)
-    mask[i_left:i0+1] = True
-    
-    return mask, x[i_left], x[i0], (i_left, i_right), baseline, robust_sigma, thr_high, thr_low
+    mask[i_left:i0+1] = True     
+
+    return mask, x[i_left], x[i0], (i_left, i0), baseline, sigma, thr_high, thr_low
 
 #%%
 def fit_and_convert_u8(filename):
@@ -184,79 +182,151 @@ def fit_and_convert_u8(filename):
 
     mask, xL, xR, (iL, iR), baseline, sig, thr_high, thr_low = auto_roi_from_dip(u8_data, sipm_data) #Auto-detect ROI around dip
 
-    #Plotting Section
-    plt.figure(figsize=(10, 6))
-    plt.plot(u8_data, sipm_data, '.', markersize=2, alpha=0.5)
-    if xL is not None:
-        plt.axvspan(xL, xR, alpha=0.15)
-        plt.title(f"SiPM vs u8 (ROI auto-detected: [{xL:.3g}, {xR:.3g}])")
-    else:
-        plt.title("SiPM vs u8 (No dip/ROI detected)")
-    plt.xlabel("u8 Excitation Value")
-    plt.ylabel("SiPM Signal (~Escape Rate)")
-    plt.grid(True, linestyle='--', alpha=0.7)
-    #plt.xlim(xL,xR)
+    t = np.arange(len(u8_data))
+    
+    plt.figure(figsize=(10,6))
+    if iL is not None:
+        plt.axvspan(iL, iR, alpha=0.2) #labels the ROI
+    plt.plot(t, sipm_data, '.', markersize=2, alpha=0.6)
+    plt.title("SiPM vs time index")
+    plt.xlabel("time index")
+    plt.ylabel("SiPM")
+    plt.grid(True, linestyle="--", alpha=0.7)
     plt.tight_layout()
     plt.show()
+    
+    plt.figure(figsize=(10,4))
+    if iL is not None:
+        plt.axvspan(iL, iR, alpha=0.2) #labels the ROI
+    plt.plot(t, u8_data, '.', markersize=2, alpha=0.6)
+    plt.title("u8 vs time index")
+    plt.xlabel("time index")
+    plt.ylabel("u8")
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.tight_layout()
+    plt.show()
+    
+    #Extract ROI data for fitting
+    u8_roi_for_fit = u8_data[mask]
+    t_roi_for_fit = t[mask]
+    sipm_roi_for_fit = sipm_data[mask]
+    
+    if len(t_roi_for_fit) < 2:
+        raise RuntimeError("ROI too small for fitting.")
+    if not np.all(np.diff(t_roi_for_fit) == 1):
+        print("Warning: ROI mask is not continuous in time.")
 
-    #Fitting Section
-    u8_roi = u8_data[mask]
-    sipm_roi = sipm_data[mask]
-    order = np.argsort(u8_roi) #for isolating linear section from padded ROI
-    u = u8_roi[order]
-    s = sipm_roi[order]
-    ds = np.abs(np.diff(s)) #look at CONSECUTIVE differences to find baseline end
-    n_base = max(5, int(0.1 * len(ds)))   #first 10% or at least 5 points have baseline, so use that to estimate noise in this region
-    baseline_noise = np.median(ds[:n_base])
-    factor=5.0        #how much larger than baseline counts as "real"
-    run_length=7      #how many consecutive points above threshold to confirm end of baseline
+    #IMPORTANT: center time so polyfit isn't ill-conditioned (time indices are huge)
+    t0 = t_roi_for_fit[0]
+    tau = t_roi_for_fit - t0
 
+    deg = 4  #degree of polynomial fit
+    p = np.poly1d(np.polyfit(tau, u8_roi_for_fit, deg))
+    u8_fit = p(tau)
+    #Plot: u8 vs time with fit overlay
+    plt.figure(figsize=(10,4))
+    plt.plot(t, u8_data, '.', markersize=2, alpha=0.3, label="all data")
+    plt.plot(t_roi_for_fit, u8_roi_for_fit, '.', markersize=2, alpha=0.8, label="ROI")
+    plt.plot(t_roi_for_fit, u8_fit, 'r-', linewidth=2, label=f"poly deg {deg} fit")
+    plt.axvspan(iL, iR, alpha=0.15)
+    plt.title("u8 vs time (ROI fit)")
+    plt.xlabel("time index")
+    plt.ylabel("u8")
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+    print(u8_fit)
+    converted_voltages = u8_fit * 15 #convert to volatges
+    return converted_voltages, u8_roi_for_fit, t_roi_for_fit, sipm_roi_for_fit #pre-lim return for test run
+    
+    #Final step for this function: substitute the volatges in as one of the electrodeConfig arg along with borders as the other.
+#%%
+def extract_measured_temp(converted_voltages, sipm_roi_for_fit):
+    '''
+    FINAL STEP: PLOT SIPM vs VOLTAGE DROP
+    Inputs: converted_voltages (np.array) - voltages from fit, sipm_roi_for_fit (np.array) - corresponding SiPM data in the ROI
+    Returns: Measured_Temp (float) - calculated temperature from the fit slope
+    '''
+    
+    converted_voltages = np.asarray(converted_voltages)  #get the voltages as a numpy array for linspace and indexing
+    v_start = float(converted_voltages[0])
+    v_end   = float(converted_voltages[-1])
+    n_steps = len(converted_voltages)   
+    v_sweep = np.linspace(v_start, v_end, n_steps) #sets the sweep for voltage drop calculation
+
+    #2.create for loop wuth getElectrodeVoltageDrop called inside to get voltage drop for each converted voltage
+    #3.list electrode voltages and borders with converted voltages as one of them
+    #4.put them as the initial argument in electrodeConfig along with borders:
+    electrode_voltages_list = [[0, v, 50, -130, 0] for v in v_sweep]
+    electrode_borders=[0.025,0.050,0.100,0.125]
+    drops = []
+    for electrode_voltages in electrode_voltages_list:
+        electrodeConfig = (electrode_voltages, electrode_borders)
+        drop = getElectrodeVoltageDrop(electrodeConfig, rpoints=20, zpoints=40, left=Llim, right=Rlim, mur2=rad2, rfact=3.0)
+        drops.append(drop)
+        
+    x = -np.asarray(drops, dtype=float)
+    y = np.asarray(sipm_roi_for_fit, dtype=float)
+    order = np.argsort(x)
+    xs = x[order]
+    ys = y[order]
+    ds = np.abs(np.diff(ys)) #difference between adjacent y values 
+    
+    n_base = max(10, int(0.15 * len(ds))) #baseline reference points (first 15%)
+    baseline_noise = np.median(ds[:n_base]) + 1e-12
+
+    factor = 9.5
+    run_length = 12
+
+    #find start of flank: sustained departure from baseline
     start_idx = None
     for i in range(len(ds) - run_length):
         if np.all(ds[i:i+run_length] > factor * baseline_noise):
-            start_idx = i + 1   # +1 because diff shifts index
+            start_idx = i + 1   # +1 because ds is diff-indexed
             break
 
     if start_idx is None:
-        raise RuntimeError("Could not detect end of baseline.")
+        raise RuntimeError("Could not detect start of flank (try factor=1.5 or run_length=8).")
 
-    u8_roi_for_fit = u[start_idx:]
-    sipm_roi_for_fit = s[start_idx:]
+    '''#find where it becomes flat again (plateau)
+    end_idx = len(xs)
+    flat_factor = 2.0
 
-    if len(u8_roi_for_fit) < 2:
-        raise RuntimeError("Not enough points for linear fit.") #Just failsafe
+    for j in range(start_idx, len(ds) - run_length):
+        if np.all(ds[j:j+run_length] < flat_factor * baseline_noise):
+            end_idx = j + 1
+            break
+'''
+    #fit only the flank segment
+    x_fit = xs[start_idx:]
+    y_fit = ys[start_idx:]
 
-    m, b = np.polyfit(u8_roi_for_fit, sipm_roi_for_fit, 1) 
+    if len(x_fit) < 2:
+        raise RuntimeError("Not enough points for linear fit after trimming plateau.")
 
-    #Fit Plotting Section
-    plt.figure(figsize=(10, 6))
-    plt.plot(u, s, '.', alpha=0.3, label="ROI (all)")
-    plt.plot(u8_roi_for_fit, sipm_roi_for_fit, 'o',
-            color='orange', markersize=4, label="Linear region")
+    m, b = np.polyfit(x_fit, y_fit, 1)
+    Measured_Temp=qe*1.05/(kb*m) #in Kelvin
 
-    u_fit = np.linspace(u8_roi_for_fit.min(), u8_roi_for_fit.max(), 200)
-    plt.plot(u_fit, m * u_fit + b, 'r-', linewidth=2,
-            label=f"Fit: y = {m:.3g} x + {b:.3g}")
-
-    plt.title("SiPM vs u8 — Linear Region After Baseline")
-    plt.xlabel("u8 Excitation Value (ROI)")
+    #Plotting section
+    plt.figure(figsize=(10,4))
+    plt.plot(xs, ys, 'o-', markersize=3, alpha=0.5, label="data (x flipped, sorted)")
+    plt.plot(x_fit, y_fit, 'o', markersize=4, label="fit region")
+    xline = np.linspace(x_fit.min(), x_fit.max(), 200)
+    plt.plot(xline, m*xline + b, 'r-', linewidth=2, label=f"fit: y={m:.3g}x+{b:.3g}")
+    plt.xlabel("Flipped Voltage Drop (-V)")
     plt.ylabel("SiPM Signal (~Escape Rate)")
+    plt.grid(True, linestyle="--", alpha=0.7)
     plt.legend()
-    plt.grid(True, linestyle='--', alpha=0.7)
     plt.tight_layout()
     plt.show()
     
-    #convert to volatges
-    converted_volatges = u_fit * 15
-    return converted_volatges, u8_roi_for_fit, sipm_roi_for_fit, m, b  #pre-lim return for test run
-
-    #Next Next Step: fit the sipm vs u8 data to get a functional form for u8 - use the roi to fit a line to the linear map,
-    #then use that as input for electrodeConfig in getElectrodeVoltageDrop to get the voltage drop. <--- should be done now.
-    
-    #Final step for this function: substitute the volatges in as one of the electrodeConfig arg along with borders as the other.
+    return Measured_Temp
 
 #%% - TEST RUN
-fit_and_convert_u8('/Users/rupgango/Downloads/Dec13/133632.813.csv')
+converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8('/Users/rupgango/Downloads/Dec13/135903.810.csv')
+temp = extract_measured_temp(converted_voltages, sipm_roi_for_fit)
+print(f"Extracted temperature: {temp} K")
 
 #general cross-platform code for processing all files in a directory - but commneted out for testing atm.
 '''
@@ -266,5 +336,7 @@ for fname in os.listdir(folder):
     if fname.lower().endswith(".csv"):
         filepath = os.path.join(folder, fname)
         print(f"\nProcessing: {filepath}")
-        fit_and_convert_u8(filepath)
+        converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8(filepath)
+        temp = extract_measured_temp(converted_voltages, sipm_roi_for_fit)
+        print(f"Extracted temperature: {temp} K")
         '''
