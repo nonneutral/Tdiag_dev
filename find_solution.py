@@ -77,7 +77,7 @@ def plasma_length_guess(NVal,mur2,rw,q_e,position_map_z,free_space_solution,elec
     rp = mur2
     rw = rw
     cpl = NVal/(electrode_borders[2]-electrode_borders[1])
-    potl_inf = (cpl*(-q_e)/(4*np.pi*e0))*(2**np.log(rw/rp)+1)
+    potl_inf = (cpl*(-q_e)/(4*np.pi*e0))*(2*np.log(rw/rp)+1)
     potl_inf = potl_inf - np.min(np.abs(potl_barrier[inElectrode])) 
     print(np.min(np.abs(potl_barrier[inElectrode])))
     # need to make this more general (- sign must be removed) not dependent on charge sign
@@ -169,7 +169,7 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,
         print(f'Initial plasma length estimate: {lp_init_config[2]:0.3e} m (from {lp_init_config[0]:0.3e} m to {lp_init_config[1]:0.3e} m)')
         #guesses omega_r based on the initial plasma length given
         quad_eq_c = (NVal*q_e**2)/(np.pi*lp_init*mur2*mur2*(2*m_e*e0))
-        omega_r = (omega_c-np.sqrt(omega_c*omega_c-4*quad_eq_c))
+        omega_r = .5*(omega_c-np.sqrt(omega_c*omega_c-4*quad_eq_c))
 
     print(f'omega_r = {omega_r}')
 
@@ -237,8 +237,15 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,
         nnew[position_map_z<roi_left]=0
         nnew[position_map_z>roi_right]=0
 
-
         total=np.sum(nnew*volume_elements)
+        
+        vfree_on = free_space_solution[0,:]
+        vsc_on = voltageGuess[0,:]
+        peak_idx   = int(np.argmax(vfree_on))
+        barrier_idx = int(np.argmin(vfree_on[0:peak_idx]))  # left barrier only may need to change if plasma shifts right
+        drop = float(vsc_on[peak_idx] - vfree_on[barrier_idx])  # magnitude in volts
+        
+        isConfined = drop > 5*(kb*T_e)/q_e
         
         # -------- FAIL-FAST GUARD #2: total <= 0 or non-finite -> normalization will explode --------
         if (not np.isfinite(total)) or (total <= 0):
@@ -310,7 +317,7 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,
         plt.title("potential")
         plt.colorbar()
         plt.show()
-    return ngrid,position_map_z,position_map_r,voltageGuess,free_space_solution,rmean,omega_r,volume_elements
+    return ngrid,position_map_z,position_map_r,voltageGuess,free_space_solution,rmean,omega_r,volume_elements, isConfined
 
 def plot_density(sol):
 
