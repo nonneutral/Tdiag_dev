@@ -14,48 +14,6 @@ kb=1.38064852e-23 #Boltzmann's constant in joules per kelvin
 qe=1.60217662e-19 #elementary charge in coulombs
 
 #%%
-'''
-def process_and_plot(filename):
-    """""
-    Processes the given CSV file to convert u8 excitation values to voltages
-    Inputs: filepath (str) - path to the CSV file
-    Returns: converted_voltages (np.array), sipm_data (np.array)
-    """
-    try:
-        df = pd.read_csv(filename, header=None)
-    except Exception as e:
-        print(f"Error reading {filename}: {e}")
-        return
-
-    sipm_data = df[0].values  #sipm (~escape rate)
-    u8_data = df[1].values    #u8 excitations
-    
-    #Mapping the min/max of the u8 data to the target voltage range (-120V to -63V)
-    u8_min = np.min(u8_data)
-    u8_max = np.max(u8_data)
-    v_min_target = -63.0  # Corresponds to the most negative u8 value
-    v_max_target = 120.0   # Corresponds to the least negative u8 value
-    
-    slope = (v_max_target - v_min_target) / (u8_max - u8_min) #Calculate slope of linear map
-    intercept = v_max_target - slope * u8_max
-    
-    converted_voltages = slope * u8_data + intercept  #transformed u8 exciation data
-
-    #Plotting Section
-    plt.figure(figsize=(10, 6))
-    plt.plot(u8_data, sipm_data, '.', markersize=2, alpha=0.5, color='blue')
-    plt.title(f"SiPM Signal vs Voltage\n(Mapped range: {v_min_target} V to {v_max_target} V)")
-    plt.xlabel("Voltage (V)")
-    plt.ylabel("SiPM Signal (~Escape Rate)")
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.tight_layout()
-    plt.show()
-    return converted_voltages, sipm_data
-
-voltages, sipm = process_and_plot('/Users/rupgango/Downloads/Dec13/134414.747.csv')
-'''
-
-#%%
 def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2, rfact): #used in final_SiPM_vs_VoltagePlot
     ''' Gets the combined Electrode "Excitement/Voltage Drop" Profile 
         without having to run the solver.
@@ -101,15 +59,29 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
     return VoltageDrop
 
 #%%
-def auto_roi_from_dip(
-    x, y,
-    smooth_window=101,
-    polyorder=3,
-    baseline_quantile=0.90,
-    sigma_low=3.5,     
-    sigma_high=2.0,    
-    prepad=500,        # how many points BEFORE the dip edge to include (time)
-    ): #used in fit_and_convert_u8
+def auto_roi_from_dip(x, y, smooth_window=101, polyorder=3, baseline_quantile=0.90,
+                      sigma_low=3.5, sigma_high=2.0, prepad=500): 
+    '''
+    Automatically detects a dip in the data and defines a region of interest (ROI) around it.
+    
+    Inputs: x (array-like): x-axis data (e.g., time indices)
+            y (array-like): y-axis data (e.g., SiPM signal)
+            smooth_window (int): window size for Savitzky-Golay filter (must be odd)
+            polyorder (int): polynomial order for Savitzky-Golay filter
+            baseline_quantile (float): quantile to estimate baseline level
+            sigma_low (float): number of sigmas below baseline to define dip threshold
+            sigma_high (float): number of sigmas for hysteresis threshold to find edges
+            prepad (int): number of points to pad on the left side of the detected dip for the ROI
+            
+    Returns: mask (boolean array): True for points in the ROI, False otherwise
+            x_left (float): x-value of the left edge of the ROI
+            x_right (float): x-value of the right edge of the ROI
+            (i_left, i_right): indices of the left and right edges of the ROI
+            baseline (float): estimated baseline level
+            sigma (float): estimated noise level (sigma)
+            thr_high (float): high threshold for edge detection
+            thr_low (float): low threshold for dip detection 
+    '''
     x = np.asarray(x)
     y = np.asarray(y)
 
@@ -242,22 +214,24 @@ def fit_and_convert_u8(filename):
     
     #Final step for this function: substitute the volatges in as one of the electrodeConfig arg along with borders as the other.
 #%%
-def extract_measured_temp(converted_voltages, sipm_roi_for_fit):
+def getTotalVoltageDropProfile(converted_voltages):
     '''
-    FINAL STEP: PLOT SIPM vs VOLTAGE DROP
-    Inputs: converted_voltages (np.array) - voltages from fit, sipm_roi_for_fit (np.array) - corresponding SiPM data in the ROI
-    Returns: Measured_Temp (float) - calculated temperature from the fit slope
-    '''
+    Gets the total voltage drop profile for the given converted voltages by calling 
+    getElectrodeVoltageDrop for each voltage and putting them in a list. 
+    This will be used as the x-axis for the final plot of SiPM vs Voltage Drop.
     
+    Inputs: converted_voltages (np.array) - voltages from fit
+    Returns: drops (list of voltage drops corresponding to each converted voltage).
+    '''
     converted_voltages = np.asarray(converted_voltages)  #get the voltages as a numpy array for linspace and indexing
     v_start = float(converted_voltages[0])
     v_end   = float(converted_voltages[-1])
     n_steps = len(converted_voltages)   
     v_sweep = np.linspace(v_start, v_end, n_steps) #sets the sweep for voltage drop calculation
 
-    #2.create for loop wuth getElectrodeVoltageDrop called inside to get voltage drop for each converted voltage
-    #3.list electrode voltages and borders with converted voltages as one of them
-    #4.put them as the initial argument in electrodeConfig along with borders:
+    #1.create for loop wuth getElectrodeVoltageDrop called inside to get voltage drop for each converted voltage
+    #2.list electrode voltages and borders with converted voltages as one of them
+    #3.put them as the initial argument in electrodeConfig along with borders:
     electrode_voltages_list = [[0, v, 50, -130, 0] for v in v_sweep]
     electrode_borders=[0.025,0.050,0.100,0.125]
     drops = []
@@ -266,18 +240,27 @@ def extract_measured_temp(converted_voltages, sipm_roi_for_fit):
         drop = getElectrodeVoltageDrop(electrodeConfig, rpoints=20, zpoints=40, left=Llim, right=Rlim, mur2=rad2, rfact=3.0)
         drops.append(drop)
         
+    return drops
+
+def extract_measured_temp(drops, sipm_roi_for_fit):
+    '''
+    FINAL STEP: PLOT SIPM vs VOLTAGE DROP
+    Inputs: converted_voltages (np.array) - voltages from fit, sipm_roi_for_fit (np.array) - corresponding SiPM data in the ROI
+    Returns: Measured_Temp (float) - calculated temperature from the fit slope
+    '''
+    
     x = -np.asarray(drops, dtype=float)
-    y = np.asarray(sipm_roi_for_fit, dtype=float)
+    y = np.log(-np.asarray(sipm_roi_for_fit, dtype=float))
     order = np.argsort(x)
     xs = x[order]
     ys = y[order]
     ds = np.abs(np.diff(ys)) #difference between adjacent y values 
     
-    n_base = max(10, int(0.15 * len(ds))) #baseline reference points (first 15%)
+    n_base = max(10, int(0.01 * len(ds))) #baseline reference points (first 15%)
     baseline_noise = np.median(ds[:n_base]) + 1e-12
 
-    factor = 9.5
-    run_length = 12
+    factor = 1.5
+    run_length = 2
 
     #find start of flank: sustained departure from baseline
     start_idx = None
@@ -288,16 +271,7 @@ def extract_measured_temp(converted_voltages, sipm_roi_for_fit):
 
     if start_idx is None:
         raise RuntimeError("Could not detect start of flank (try factor=1.5 or run_length=8).")
-
-    '''#find where it becomes flat again (plateau)
-    end_idx = len(xs)
-    flat_factor = 2.0
-
-    for j in range(start_idx, len(ds) - run_length):
-        if np.all(ds[j:j+run_length] < flat_factor * baseline_noise):
-            end_idx = j + 1
-            break
-'''
+    
     #fit only the flank segment
     x_fit = xs[start_idx:]
     y_fit = ys[start_idx:]
@@ -324,8 +298,11 @@ def extract_measured_temp(converted_voltages, sipm_roi_for_fit):
     return Measured_Temp
 
 #%% - TEST RUN
+Recompute_Drops=True #trun to False to skip voltage drop recomputation 
 converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8('/Users/rupgango/Downloads/Dec13/135903.810.csv')
-temp = extract_measured_temp(converted_voltages, sipm_roi_for_fit)
+if Recompute_Drops: 
+    drops = getTotalVoltageDropProfile(converted_voltages)   
+temp = extract_measured_temp(drops, sipm_roi_for_fit)
 print(f"Extracted temperature: {temp} K")
 
 #general cross-platform code for processing all files in a directory - but commneted out for testing atm.
@@ -337,6 +314,7 @@ for fname in os.listdir(folder):
         filepath = os.path.join(folder, fname)
         print(f"\nProcessing: {filepath}")
         converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8(filepath)
-        temp = extract_measured_temp(converted_voltages, sipm_roi_for_fit)
+        drops = getTotalVoltageDropProfile(converted_voltages)
+        temp = extract_measured_temp(drops, sipm_roi_for_fit)
         print(f"Extracted temperature: {temp} K")
         '''
