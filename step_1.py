@@ -1,17 +1,30 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import os
 from scipy import special
 from scipy.signal import savgol_filter
 from find_solution import getFiniteSolution
-import os
+from datetime import datetime
 #from solver import getFiniteSolution - commented out to prevent solver running here
+
+now=str(datetime.now())
+print(f'{now}\tExecution start')
 
 Llim=0.035
 Rlim=0.110
 rad2=0.0002 #plasma radius in meters
 kb=1.38064852e-23 #Boltzmann's constant in joules per kelvin
 qe=1.60217662e-19 #elementary charge in coulombs
+
+#directory search function
+def iter_all(substring, path):
+    return list(
+        os.path.join(root, entry)
+        for root, dirs, files in os.walk(path)
+        for entry in dirs + files
+        if substring in entry
+    )
 
 #%%
 def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2, rfact): #used in final_SiPM_vs_VoltagePlot
@@ -55,7 +68,7 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
     peak = axial_profile[peak_idx]
     barrier = np.min(axial_profile[:peak_idx])
     VoltageDrop = peak - barrier
-    print(f"Calculated Voltage Drop: {VoltageDrop} V")
+    #print(f"Calculated Voltage Drop: {VoltageDrop} V")
     return VoltageDrop
 
 #%%
@@ -208,7 +221,7 @@ def fit_and_convert_u8(filename):
     plt.legend()
     plt.tight_layout()
     plt.show()
-    print(u8_fit)
+    #print(u8_fit)
     converted_voltages = u8_fit * 15 #convert to volatges
     return converted_voltages, u8_roi_for_fit, t_roi_for_fit, sipm_roi_for_fit #pre-lim return for test run
     
@@ -397,11 +410,15 @@ def extract_measured_temp(drops, sipm_roi_for_fit):
 
 #%% - TEST RUN
 Recompute_Drops=True #trun to False to skip voltage drop recomputation 
-converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8('/Users/rupgango/Downloads/Dec13/135903.810.csv')
+filepath1=iter_all('csv','../')[1]
+converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8(filepath1)
 if Recompute_Drops: 
     drops = getTotalVoltageDropProfile(converted_voltages)   
 temp = extract_measured_temp(drops, sipm_roi_for_fit)
 print(f"Extracted temperature: {temp} K")
+
+now=str(datetime.now())
+print(f'{now}\tExecution complete')
 
 #general cross-platform code for processing all files in a directory - but commneted out for testing atm.
 '''
