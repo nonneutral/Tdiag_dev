@@ -5,9 +5,10 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 from scipy import special
 from pylab import rcParams
-from scipy.special import erf #import error function
 from scipy.special import erfc
+from datetime import datetime
 
+starttime=str(datetime.now())
 
 print("--- solver_copy.py loaded ---")
 
@@ -782,3 +783,6 @@ print(f"\nInferred Temperature from Escape Curve: {T_inferred:.2f} K")
 print(f"Actual Temperature: {T_e:.2f} K")
 print(f"Percentage Error: {abs(T_inferred - T_e) / T_e * 100:.2f}%")
 #%%
+stoptime=str(datetime.now())
+print(f'{starttime}\tExecution start')
+print(f'{stoptime}\tExecution finish')
