@@ -263,7 +263,7 @@ def extract_measured_temp(drops, sipm_roi_for_fit):
     '''
     
     x = -np.asarray(drops, dtype=float)
-    y = np.log(-np.asarray(sipm_roi_for_fit, dtype=float))
+    y = np.log(np.abs(np.asarray(sipm_roi_for_fit, dtype=float)))
     order = np.argsort(x)
     xs = x[order]
     ys = y[order]
