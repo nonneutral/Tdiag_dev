@@ -241,26 +241,24 @@ def getTotalVoltageDropProfile(converted_voltages):
         drops.append(drop)
         
     return drops
-
+'''
 def extract_measured_temp(drops, sipm_roi_for_fit):
-    '''
-    FINAL STEP: PLOT SIPM vs VOLTAGE DROP
-    Inputs: converted_voltages (np.array) - voltages from fit, sipm_roi_for_fit (np.array) - corresponding SiPM data in the ROI
-    Returns: Measured_Temp (float) - calculated temperature from the fit slope
-    '''
+    
     
     x = -np.asarray(drops, dtype=float)
-    y = np.log(-np.asarray(sipm_roi_for_fit, dtype=float))
+    y = np.log(-(np.asarray(sipm_roi_for_fit, dtype=float)[np.asarray(sipm_roi_for_fit, dtype=float) < 0]))
+    plt.plot(x, y, 'o-', markersize=3, alpha=0.5)
+    plt.show()
     order = np.argsort(x)
     xs = x[order]
     ys = y[order]
     ds = np.abs(np.diff(ys)) #difference between adjacent y values 
     
-    n_base = max(10, int(0.01 * len(ds))) #baseline reference points (first 15%)
+    n_base = max(10, int(0.20 * len(ds))) #baseline reference points (first 15%)
     baseline_noise = np.median(ds[:n_base]) + 1e-12
 
-    factor = 1.5
-    run_length = 2
+    factor = -5
+    run_length = 12
 
     #find start of flank: sustained departure from baseline
     start_idx = None
@@ -296,6 +294,106 @@ def extract_measured_temp(drops, sipm_roi_for_fit):
     plt.show()
     
     return Measured_Temp
+'''
+def longest_true_run(mask):
+    """Return (start, end) indices of the longest contiguous True run in mask."""
+    mask = np.asarray(mask, dtype=bool)
+    if mask.size == 0 or not mask.any():
+        return None, None
+    idx = np.flatnonzero(mask)
+    breaks = np.where(np.diff(idx) > 1)[0]
+    starts = np.r_[idx[0], idx[breaks + 1]]
+    ends   = np.r_[idx[breaks], idx[-1]]
+    lengths = ends - starts + 1
+    j = np.argmax(lengths)
+    return int(starts[j]), int(ends[j])
+
+def pick_flank_region(xs, ys, min_pts=80):
+    xs = np.asarray(xs, float)
+    ys = np.asarray(ys, float)
+
+    w = min(101, len(ys) - (1 - (len(ys) % 2)))
+    if w >= 9:
+        if w % 2 == 0: w -= 1
+        ys_s = savgol_filter(ys, w, 2)
+    else:
+        ys_s = ys
+
+    dy = np.gradient(ys_s, xs)
+    dy_max = np.nanmax(dy)
+
+    # relax threshold until we get a decent chunk of points
+    for frac in [0.8, 0.6, 0.45, 0.35, 0.25, 0.18, 0.12]:
+        mask = np.isfinite(dy) & (dy > frac * dy_max)
+        iL, iR = longest_true_run(mask)
+        if iL is not None and (iR - iL + 1) >= min_pts:
+            return iL, iR, ys_s
+
+    # fallback: take mid 20–80% of smoothed y (usually the "linear-ish" part)
+    ylo = np.quantile(ys_s, 0.2)
+    yhi = np.quantile(ys_s, 0.8)
+    mask = (ys_s >= ylo) & (ys_s <= yhi)
+    iL, iR = longest_true_run(mask)
+    if iL is None or (iR - iL + 1) < 10:
+        raise RuntimeError("Could not find a stable flank region.")
+    return iL, iR, ys_s
+
+def extract_measured_temp(drops, sipm_roi_for_fit):
+    x = -np.asarray(drops, dtype=float)
+    sipm = np.asarray(sipm_roi_for_fit, dtype=float)
+
+    # 1) Pairing-safe mask (same mask applied to x and sipm)
+    good = np.isfinite(x) & np.isfinite(sipm) & (sipm < 0)
+
+    print("len(drops):", len(drops), "len(sipm):", len(sipm), "len(good):", good.sum())
+    print("drops: nan", np.isnan(x).sum(), "inf", np.isinf(x).sum(),
+          "min", np.nanmin(x), "max", np.nanmax(x))
+    print("sipm:  nan", np.isnan(sipm).sum(), "inf", np.isinf(sipm).sum(),
+          "min", np.nanmin(sipm), "max", np.nanmax(sipm))
+
+    x = x[good]
+    rate = -sipm[good]
+
+    # 2) prevent log(0) -> -inf
+    eps = max(1e-12, np.percentile(rate, 1) * 1e-3)
+    y = np.log(np.maximum(rate, eps))
+
+    # 3) sort
+    order = np.argsort(x)
+    xs = x[order]
+    ys = y[order]
+
+    # 4) final finite cleanup before polyfit
+    finite = np.isfinite(xs) & np.isfinite(ys)
+    xs = xs[finite]
+    ys = ys[finite]
+
+    iL, iR, ys_s = pick_flank_region(xs, ys, min_pts=80)
+
+    x_fit = xs[iL:iR+1]
+    y_fit = ys[iL:iR+1]
+
+    # (optional but nice) center x so intercept isn't huge
+    x0 = np.mean(x_fit)
+    m, c = np.polyfit(x_fit - x0, y_fit, 1)
+    b = c - m*x0   # back to y = m*x + b
+
+    print("fit pts:", len(x_fit), "slope m:", m)
+    Measured_Temp = qe*1.05/(kb*abs(m))
+    
+    plt.figure(figsize=(10,4))
+    plt.plot(xs, ys, 'o-', markersize=3, alpha=0.5, label="log(-SiPM)")
+    plt.plot(x_fit, y_fit, 'o', markersize=4, label="fit region")
+    xline = np.linspace(x_fit.min(), x_fit.max(), 200)
+    plt.plot(xline, m*xline + b, 'r-', linewidth=2, label=f"fit: y={m:.3g}x+{b:.3g}")
+    plt.xlabel("Flipped Voltage Drop (-V)")
+    plt.ylabel("log(-SiPM)")
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    return Measured_Temp
 
 #%% - TEST RUN
 Recompute_Drops=True #trun to False to skip voltage drop recomputation 
@@ -318,3 +416,9 @@ for fname in os.listdir(folder):
         temp = extract_measured_temp(drops, sipm_roi_for_fit)
         print(f"Extracted temperature: {temp} K")
         '''
+        
+'''
+    FINAL STEP: PLOT SIPM vs VOLTAGE DROP
+    Inputs: converted_voltages (np.array) - voltages from fit, sipm_roi_for_fit (np.array) - corresponding SiPM data in the ROI
+    Returns: Measured_Temp (float) - calculated temperature from the fit slope
+'''
