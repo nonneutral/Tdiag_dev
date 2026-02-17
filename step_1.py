@@ -6,16 +6,17 @@ from scipy import special
 from scipy.signal import savgol_filter
 from find_solution import getFiniteSolution
 from datetime import datetime
-#from solver import getFiniteSolution - commented out to prevent solver running here
+#from solver import getFiniteSolution
 
 now=str(datetime.now())
 print(f'{now}\tExecution start')
 
 Llim=0.035
-Rlim=0.110
+Rlim=0.115
 rad2=0.0002 #plasma radius in meters
 kb=1.38064852e-23 #Boltzmann's constant in joules per kelvin
 qe=1.60217662e-19 #elementary charge in coulombs
+rw = 0.017  # meters, inner wall radius (match simulation)
 
 #directory search function
 def iter_all(substring, path):
@@ -27,7 +28,7 @@ def iter_all(substring, path):
     )
 
 #%%
-def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2, rfact): #used in final_SiPM_vs_VoltagePlot
+def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2, rfact, rw): #used in final_SiPM_vs_VoltagePlot
     ''' Gets the combined Electrode "Excitement/Voltage Drop" Profile 
         without having to run the solver.
         
@@ -36,7 +37,7 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
     '''
     Mmax=1
     Nmax=20000
-    zeros=[special.jn_zeros(m,Nmax) for m in range(Mmax)]
+    zeros=[special.jn_zeros(m, Nmax) for m in range(Mmax)]
 
     nr=rpoints
     nz=zpoints
@@ -52,7 +53,7 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
             
     def getElectrodeSolution(left,right,voltage):
         cs=2*voltage/(zeros[0]*special.j1(zeros[0]))
-        symmetricsolution=getFiniteSolution([cs],right-left,lambda r:voltage)
+        symmetricsolution=getFiniteSolution([cs],right-left,lambda r:voltage, rw)
         return lambda r,z: symmetricsolution(z-(left+right)/2,r)
 
     electrode_voltages,electrode_borders=electrodeConfig
@@ -63,13 +64,26 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
     for electrode in electrodes:
         free_space_solution+=electrode(position_map_r,position_map_z)
     
-    axial_profile = np.max(free_space_solution, axis=0)
-    peak_idx = np.argmax(axial_profile)
+    axial_profile = free_space_solution[0, :]
+    z_axis = position_map_z[0, :]
+
+    peak_idx = int(np.argmax(axial_profile))
     peak = axial_profile[peak_idx]
-    barrier = np.min(axial_profile[:peak_idx])
-    VoltageDrop = peak - barrier
-    #print(f"Calculated Voltage Drop: {VoltageDrop} V")
+
+    if peak_idx > 0:
+        barrier_idx = int(np.argmin(axial_profile[:peak_idx]))   # left barrier only
+    else:
+        barrier_idx = int(np.argmin(axial_profile))              # fallback
+
+    barrier = axial_profile[barrier_idx]
+    VoltageDrop = abs(peak - barrier)
+    
+    print("peak V", peak, "at z", z_axis[peak_idx],
+      "| barrier V", barrier, "at z", z_axis[barrier_idx],
+      "| drop", VoltageDrop)
+    
     return VoltageDrop
+
 
 #%%
 def auto_roi_from_dip(x, y, smooth_window=101, polyorder=3, baseline_quantile=0.90,
@@ -227,7 +241,7 @@ def fit_and_convert_u8(filename):
     
     #Final step for this function: substitute the volatges in as one of the electrodeConfig arg along with borders as the other.
 #%%
-def getTotalVoltageDropProfile(converted_voltages):
+def getTotalVoltageDropProfile(converted_voltages, rw):
     '''
     Gets the total voltage drop profile for the given converted voltages by calling 
     getElectrodeVoltageDrop for each voltage and putting them in a list. 
@@ -240,17 +254,17 @@ def getTotalVoltageDropProfile(converted_voltages):
     v_start = float(converted_voltages[0])
     v_end   = float(converted_voltages[-1])
     n_steps = len(converted_voltages)   
-    v_sweep = np.linspace(v_start, v_end, n_steps) #sets the sweep for voltage drop calculation
+    v_sweep = np.asarray(converted_voltages, float)   #sets the sweep for voltage drop calculation
 
     #1.create for loop wuth getElectrodeVoltageDrop called inside to get voltage drop for each converted voltage
     #2.list electrode voltages and borders with converted voltages as one of them
     #3.put them as the initial argument in electrodeConfig along with borders:
-    electrode_voltages_list = [[0, v, 50, -130, 0] for v in v_sweep]
+    electrode_voltages_list = [[0, v, -50, -130, 0] for v in v_sweep]
     electrode_borders=[0.025,0.050,0.100,0.125]
     drops = []
     for electrode_voltages in electrode_voltages_list:
         electrodeConfig = (electrode_voltages, electrode_borders)
-        drop = getElectrodeVoltageDrop(electrodeConfig, rpoints=20, zpoints=40, left=Llim, right=Rlim, mur2=rad2, rfact=3.0)
+        drop = getElectrodeVoltageDrop(electrodeConfig, rpoints=20, zpoints=40, left=Llim, right=Rlim, mur2=rad2, rfact=3.0, rw=rw)
         drops.append(drop)
         
     return drops
@@ -553,7 +567,7 @@ def best_linear_subwindow(xs, ys, iL, iR, min_pts=100, r2_min=0.97,
     return best[0], best[1], best[2]
 
 def extract_measured_temp(drops, sipm_roi_for_fit):
-    x = -np.asarray(drops, dtype=float)
+    x = np.asarray(drops, dtype=float)
     sipm = np.asarray(sipm_roi_for_fit, dtype=float)
 
     #Pairing-safe mask (same mask applied to x and sipm)
@@ -774,7 +788,7 @@ Recompute_Drops=True #trun to False to skip voltage drop recomputation
 filepath1=iter_all('csv','../')[8]
 converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8(filepath1)
 if Recompute_Drops: 
-    drops = getTotalVoltageDropProfile(converted_voltages)   
+    drops = getTotalVoltageDropProfile(converted_voltages, rw=rw)   
 temp = extract_measured_temp(drops, sipm_roi_for_fit)
 print(f"Extracted temperature: {temp} K")
 
@@ -800,3 +814,4 @@ for fname in os.listdir(folder):
     Inputs: converted_voltages (np.array) - voltages from fit, sipm_roi_for_fit (np.array) - corresponding SiPM data in the ROI
     Returns: Measured_Temp (float) - calculated temperature from the fit slope
 '''
+# %%
