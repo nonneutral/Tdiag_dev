@@ -26,6 +26,37 @@ def iter_all(substring, path):
         for entry in dirs + files
         if substring in entry
     )
+#%%
+def roi_from_boltzmann_surrogate(z_axis, axial_profile, electrode_borders, edge_margin_bins=2):
+    z = np.asarray(z_axis)
+    V = np.asarray(axial_profile)
+    n = len(z)
+    idx = np.arange(n)
+
+    # avoid choosing the very first/last bin as "physics"
+    interior = (idx >= edge_margin_bins) & (idx < n - edge_margin_bins)
+
+    # mimic solver's roi_init (between inner electrode borders), but clip to available z-range
+    zL = max(z.min(), electrode_borders[1])
+    zR = min(z.max(), electrode_borders[-2])
+    in_electrode = (z >= zL) & (z <= zR) & interior
+
+    # fallback if that region is empty (e.g., borders clipped by Llim/Rlim)
+    if not np.any(in_electrode):
+        in_electrode = interior
+
+    peak_idx = np.flatnonzero(in_electrode)[np.argmax(V[in_electrode])]
+
+    left_mask  = (z < z[peak_idx]) & interior
+    right_mask = (z > z[peak_idx]) & interior
+
+    if not np.any(left_mask) or not np.any(right_mask):
+        return None  # can't define a "between-two-troughs" ROI
+
+    left_idx  = np.flatnonzero(left_mask)[np.argmin(V[left_mask])]
+    right_idx = np.flatnonzero(right_mask)[np.argmin(V[right_mask])]
+
+    return left_idx, peak_idx, right_idx
 
 #%%
 def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2, rfact, rw): #used in final_SiPM_vs_VoltagePlot
@@ -67,17 +98,20 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
     axial_profile = free_space_solution[0, :]
     z_axis = position_map_z[0, :]
 
-    peak_idx = int(np.argmax(axial_profile))
-    peak = axial_profile[peak_idx]
+    roi = roi_from_boltzmann_surrogate(z_axis, axial_profile, electrode_borders, edge_margin_bins=2)
 
-    if peak_idx > 0:
-        barrier_idx = int(np.argmin(axial_profile[:peak_idx]))   # left barrier only
+    if roi is None:
+        # fallback: your old behaviour, but still protect against peak at edge
+        peak_idx = int(np.argmax(axial_profile[2:-2])) + 2
+        barrier_idx = int(np.argmin(axial_profile[:peak_idx])) if peak_idx > 0 else int(np.argmin(axial_profile))
     else:
-        barrier_idx = int(np.argmin(axial_profile))              # fallback
+        left_idx, peak_idx, right_idx = roi
+        barrier_idx = left_idx  # solver-style "left barrier"
 
+    peak = axial_profile[peak_idx]
     barrier = axial_profile[barrier_idx]
     VoltageDrop = abs(peak - barrier)
-    
+
     print("peak V", peak, "at z", z_axis[peak_idx],
       "| barrier V", barrier, "at z", z_axis[barrier_idx],
       "| drop", VoltageDrop)
@@ -370,6 +404,7 @@ def extract_measured_temp(drops, sipm_roi_for_fit):
 
     return Measured_Temp
 '''
+'''
 def auto_flank_from_slope(xs, ys,
                           smooth_window=101, polyorder=2,
                           baseline_quantile=0.25,   # <-- IMPORTANT: use LOW quantile for "flat" slopes
@@ -496,6 +531,145 @@ def auto_flank_from_slope(xs, ys,
         raise RuntimeError("Could not detect flank region from slope hysteresis.")
 
     return (iL, iR), baseline, sigma, thr_high, thr_low, dy_use, ys_s, xs, ys
+'''
+
+def auto_flank_from_slope(xs, ys,
+                          smooth_window=101, polyorder=2,
+                          baseline_quantile=0.25,
+                          sigma_low=4.0, sigma_high=2.0,
+                          pad_points=10, min_pts=50,
+                          relax=True, direction="auto",  # <-- NEW
+                          debug=False):
+    xs = np.asarray(xs, float)
+    ys = np.asarray(ys, float)
+    m = np.isfinite(xs) & np.isfinite(ys)
+    xs, ys = xs[m], ys[m]
+    order = np.argsort(xs)
+    xs, ys = xs[order], ys[order]
+    xs_u, idx = np.unique(xs, return_index=True)
+    ys = ys[idx]
+    xs = xs_u
+
+    n = len(xs)
+    if n < 30:
+        raise ValueError(f"Not enough points for flank detection (n={n}).")
+
+    # --- smooth y ---
+    w = min(smooth_window, n - (1 - (n % 2)))
+    if w >= 9:
+        if w % 2 == 0: w -= 1
+        ys_s = savgol_filter(ys, w, min(polyorder, w-1))
+    else:
+        ys_s = ys.copy()
+
+    dy_raw = np.gradient(ys_s, xs)
+
+    # ---- NEW: choose which flank to detect without flipping x ----
+    if direction == "auto":
+        m_global = np.polyfit(xs, ys, 1)[0]
+        direction_use = "falling" if m_global < 0 else "rising"
+    else:
+        direction_use = direction
+
+    if direction_use == "rising":
+        dy_use = np.clip(dy_raw, 0, None)     # positive slope only
+    elif direction_use == "falling":
+        dy_use = np.clip(-dy_raw, 0, None)    # negative slope treated as positive
+    else:
+        raise ValueError("direction must be 'rising', 'falling', or 'auto'")
+
+    # smooth the slope itself
+    w_dy = min(151, n - (1 - (n % 2)))
+    if w_dy >= 9:
+        if w_dy % 2 == 0: w_dy -= 1
+        dy_use = savgol_filter(dy_use, w_dy, 2)
+
+    # baseline slope from low quantile
+    q = np.quantile(dy_use, baseline_quantile)
+    lo = dy_use[dy_use <= q]
+    baseline = np.median(lo)
+    mad = np.median(np.abs(lo - baseline))
+    sigma = 1.4826 * mad if mad > 0 else (np.std(lo) + 1e-12)
+
+    i0 = int(np.argmax(dy_use))
+    peak = dy_use[i0]
+
+    def attempt(sl, sh, mp):
+        tl = baseline + sl * sigma
+        th = baseline + sh * sigma
+        th = max(th, 0.04 * peak)
+
+        if peak < tl:
+            return None, None, th, tl
+
+        gap_max = 8
+
+        iL = i0
+        gap = 0
+        while iL > 0:
+            if dy_use[iL-1] > th:
+                gap = 0
+                iL -= 1
+            else:
+                gap += 1
+                iL -= 1
+                if gap > gap_max:
+                    break
+
+        iR = i0
+        gap = 0
+        while iR < n-1:
+            if dy_use[iR+1] > th:
+                gap = 0
+                iR += 1
+            else:
+                gap += 1
+                iR += 1
+                if gap > gap_max:
+                    break
+
+        iL = max(0, iL - pad_points)
+        iR = min(n-1, iR + pad_points)
+
+        if (iR - iL + 1) < mp:
+            return None, None, th, tl
+
+        return iL, iR, th, tl
+
+    iL, iR, thr_high, thr_low = attempt(sigma_low, sigma_high, min_pts)
+
+    if relax and iL is None:
+        for (sl, sh, mp) in [
+            (3.0, 1.5, min_pts),
+            (2.5, 1.2, min_pts),
+            (2.0, 1.0, max(30, min_pts//2)),
+            (1.5, 0.8, max(25, min_pts//3)),
+            (1.2, 0.6, max(20, min_pts//4)),
+        ]:
+            iL, iR, thr_high, thr_low = attempt(sl, sh, mp)
+            if iL is not None:
+                break
+
+    if debug:
+        print(f"[slope] dir={direction_use} n={n} baseline={baseline:.3g} sigma={sigma:.3g} peak={peak:.3g} "
+              f"thr_low={thr_low:.3g} thr_high={thr_high:.3g} above_thr_high={np.sum(dy_use > thr_high)}")
+
+    if iL is None:
+        raise RuntimeError("Could not detect flank region from slope hysteresis.")
+
+    return (iL, iR), baseline, sigma, thr_high, thr_low, dy_use, ys_s, xs, ys, direction_use
+
+def longest_true_run(mask):
+    mask = np.asarray(mask, dtype=bool)
+    if mask.size == 0 or not mask.any():
+        return None, None
+    idx = np.flatnonzero(mask)
+    breaks = np.where(np.diff(idx) > 1)[0]
+    starts = np.r_[idx[0], idx[breaks + 1]]
+    ends   = np.r_[idx[breaks], idx[-1]]
+    lengths = ends - starts + 1
+    j = np.argmax(lengths)
+    return int(starts[j]), int(ends[j])
 
 def best_linear_subwindow(xs, ys, iL, iR, min_pts=100, r2_min=0.97,
                           y_floor=None, y_cap=None):
@@ -592,20 +766,6 @@ def extract_measured_temp(drops, sipm_roi_for_fit):
     xs = xs[finite]
     ys = ys[finite]
 
-    # Find flank region based on slope 
-    (iL, iR), base_s, sig_s, thrH, thrL, slope, ys_s, xs2, ys2 = auto_flank_from_slope(
-        xs, ys,
-        baseline_quantile=0.25,
-        sigma_low=2.5,
-        sigma_high=0.8,
-        pad_points=25,
-        min_pts=100,
-        debug=True
-    )
-
-    #IMPORTANT: from this point onward, use xs2/ys2 (the cleaned arrays the flank indices refer to)
-    xs = xs2
-    ys = ys2
     '''
     # Gate to the rising branch: throw away the bottom (flat baseline) part of the flank
     seg = slice(iL, iR+1)
@@ -639,115 +799,70 @@ def extract_measured_temp(drops, sipm_roi_for_fit):
     print("candidate flank length:", iR - iL + 1)
     '''
     
-    #choose LOWER part of the rise as a CONTINUOUS interval using smoothed y.
-    # ys_s returned from auto_flank_from_slope aligns with xs2/ys2
-    y_sm = ys_s
+        # Find flank region based on slope, without flipping x
+    (iL, iR), base_s, sig_s, thrH, thrL, slope, ys_s, xs2, ys2, direction_use = auto_flank_from_slope(
+        xs, ys,
+        baseline_quantile=0.25,
+        sigma_low=2.5,
+        sigma_high=0.8,
+        pad_points=25,
+        min_pts=100,
+        direction="auto",   # or "falling"
+        debug=True
+    )
+
+    xs = xs2
+    ys = ys2
+    y_sm = ys_s  # aligns with xs/ys
 
     seg = slice(iL, iR+1)
     xs_seg = xs[seg]
     y_raw  = ys[seg]
     y_seg  = y_sm[seg]
 
-    #levels of the rise computed on SMOOTHED y
-    y_lo = np.quantile(y_seg, 0.117)
+    y_lo = np.quantile(y_seg, 0.12)
     y_hi = np.quantile(y_seg, 0.95)
-    dy_rise = y_hi - y_lo
+    dy_span = y_hi - y_lo
 
-    #We’ll try a few “lower-rise” bands and take the first that gives a sane fit
-    #(lower band => earlier part of rise)
     bands = [
-        (0.117, 0.30),
+        (0.12, 0.30),
         (0.12, 0.35),
-        (0.14, 0.40),
         (0.15, 0.45),
         (0.17, 0.50),
     ]
 
-    min_pts_needed = 160  #widen/narrow this as you like (e.g., 80–200)
-
+    min_pts_needed = 160
     best = None
 
     for fa, fb in bands:
-        yA = y_lo + fa * dy_rise
-        yB = y_lo + fb * dy_rise
+        yA = y_lo + fa * dy_span
+        yB = y_lo + fb * dy_span
+        y_low  = min(yA, yB)
+        y_high = max(yA, yB)
 
-        idxA = np.where(y_seg >= yA)[0]
-        idxB = np.where(y_seg >= yB)[0]
-        if idxA.size == 0 or idxB.size == 0:
+        band_mask = (y_seg >= y_low) & (y_seg <= y_high)
+        a, b = longest_true_run(band_mask)
+        if a is None:
             continue
 
-        a = int(idxA[0])
-        b0 = int(idxB[0])
-
-        #ensure minimum points (same as before)
-        b = b0
+        # enforce minimum points by extending right
         if (b - a + 1) < min_pts_needed:
             b = min(len(xs_seg) - 1, a + min_pts_needed - 1)
 
-        #Extend b in chunks and stop when R² drops too much or slope changes too much.
-        step = 25
-        max_b = len(xs_seg) - 1
+        x_fit = xs_seg[a:b+1]
+        y_fit = y_raw[a:b+1]
 
-        #base fit on the "good region" we already have
-        x0 = xs_seg[a:b+1]
-        y0 = y_raw[a:b+1]
-        m0, c0 = np.polyfit(x0, y0, 1)
-        yhat0 = m0*x0 + c0
-        ss_res0 = np.sum((y0 - yhat0)**2)
-        ss_tot0 = np.sum((y0 - np.mean(y0))**2) + 1e-12
-        r2_0 = 1 - ss_res0/ss_tot0
-
-        #thresholds: tune these gently
-        r2_drop_allow = 0.09      #allow some degradation as we extend
-        slope_change_allow = 0.27 #allow 20% slope change
-
-        best_b = b
-        best_r2 = r2_0
-
-        while best_b + step <= max_b:
-            cand_b = min(max_b, best_b + step)
-
-            xw = xs_seg[a:cand_b+1]
-            yw = y_raw[a:cand_b+1]
-
-            #must still rise overall (avoid plateau)
-            if (np.median(yw[-10:]) - np.median(yw[:10])) < 0.3:
-                break
-
-            m1, c1 = np.polyfit(xw, yw, 1)
-            if m1 <= 0:
-                break
-
-            yhat = m1*xw + c1
-            ss_res = np.sum((yw - yhat)**2)
-            ss_tot = np.sum((yw - np.mean(yw))**2) + 1e-12
-            r2_1 = 1 - ss_res/ss_tot
-
-            #stop if it starts bending/plateauing (linearity deteriorates)
-            if r2_1 < (best_r2 - r2_drop_allow):
-                break
-
-            #stop if slope changes too much (curvature)
-            if abs(m1 - m0) / (abs(m0) + 1e-12) > slope_change_allow:
-                break
-
-            best_b = cand_b
-            best_r2 = r2_1
-
-        #final fit window (same a, extended b)
-        x_fit = xs_seg[a:best_b+1]
-        y_fit = y_raw[a:best_b+1]
-
-        #sanity: x span
         if np.ptp(x_fit) < 0.03:
             continue
 
-        #quick check for positive slope
         m_tmp, c_tmp = np.polyfit(x_fit, y_fit, 1)
-        if m_tmp <= 0:
+
+        # enforce correct slope sign (NO x flipping)
+        if direction_use == "rising" and m_tmp <= 0:
+            continue
+        if direction_use == "falling" and m_tmp >= 0:
             continue
 
-        #compute r2 for reporting
         yhat = m_tmp*x_fit + c_tmp
         ss_res = np.sum((y_fit - yhat)**2)
         ss_tot = np.sum((y_fit - np.mean(y_fit))**2) + 1e-12
@@ -757,7 +872,7 @@ def extract_measured_temp(drops, sipm_roi_for_fit):
         break
 
     if best is None:
-        raise RuntimeError("Could not find a stable lower-rise fit interval (bands too strict).")
+        raise RuntimeError("Could not find a stable fit interval inside the flank (bands too strict).")
 
     x_fit, y_fit, fa_used, fb_used, r2_used, m_used = best
     print(f"Lower-rise band used: {fa_used:.2f}–{fb_used:.2f} of rise; pts={len(x_fit)}; r2={r2_used:.3f}; slope={m_used:.3g}")
