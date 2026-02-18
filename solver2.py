@@ -169,15 +169,15 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
         omega_r = .5*(omega_c-np.sqrt(omega_c*omega_c-4*quad_eq_c))
 
     print(f'omega_r = {omega_r}')
-
-    u_eff=np.array([[.5*m_e*omega_r*(omega_c-omega_r)*(rbound*rind/nr)**2 
+    #note: u_eff is an energy as defined here, not an electrostatic potential
+    U_eff=np.array([[.5*m_e*omega_r*(omega_c-omega_r)*(rbound*rind/nr)**2 
                        for zind in range(nz)] for rind in range(nr)]) 
     volume_elements=np.array([[np.pi*((rbound*(rind+.5)/nr)**2-(rbound*max(0,rind-.5)/nr)**2)
                                *(rightbound-leftbound)/nz 
                                 for zind in range(nz)] for rind in range(nr)])
     #----Manual initial guess for ngrid - UPDATED ON 23rd Oct, 2025----
     """
-    exponential_guess = -((-q_e * free_space_solution) + phieff) / (kb * T_e)
+    exponential_guess = -((-q_e * free_space_solution) + U_eff) / (kb * T_e)
     magic = 600 #Cutoff for exp calculation
     mx_guess = np.max(exponential_guess)
     ngrid_guess = np.zeros((nr, nz))
@@ -207,7 +207,7 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
     for i in range(np.int64(1e6)):
         voltageGuess=np.copy(free_space_solution)
         voltageGuess+=get_voltage_from_charge_distr(q_e*ngrid)
-        exponential=-(voltageGuess*(-q_e)+u_eff)/(kb*T_e)
+        exponential=-(voltageGuess*(-q_e)+U_eff)/(kb*T_e)
         
         # -------- FAIL-FAST GUARD #1: NaNs/Infs in exponential --------
         if not np.all(np.isfinite(exponential)):
