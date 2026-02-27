@@ -235,6 +235,19 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
         
 
         total=np.sum(nnew*volume_elements)
+        #on axis potentials
+        free_on = free_space_solution[0,:]
+        sc_on = voltageGuess[0,:]
+
+        peak_idx = int(np.argmax(free_on[roi_left_ind:])+roi_left_ind) 
+        #print(f"peak_idx inside find_solution= {peak_idx}")
+        if peak_idx > 0:
+            barrier_idx = int(np.argmin(sc_on[0:peak_idx]))  # left barrier only may need to change if plasma shifts right
+            drop = sc_on[peak_idx] - sc_on[barrier_idx]
+        else:
+            drop = 0.0
+
+        isConfined = drop > 1*kb*T_e/q_e
 
         # -------- FAIL-FAST GUARD #2: total <= 0 or non-finite -> normalization will explode --------
         if (not np.isfinite(total)) or (total <= 0):
@@ -279,6 +292,8 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
                 plt.title("on-axis potential")
                 plt.plot(position_map_z[0,:],free_space_solution[0,:],label="solver electrode potential")
                 plt.plot(position_map_z[0,:],voltageGuess[0,:],label="charge-corrected potential")
+                plt.scatter(position_map_z[0,barrier_idx],voltageGuess[0,barrier_idx], label="barrier",color="r",marker=10)
+                plt.scatter(position_map_z[0,peak_idx],voltageGuess[0,peak_idx], label="peak",color="r",marker=10)
                 plt.ylabel("potential (V)")
                 plt.xlabel("position (m)")
                 plt.legend()
@@ -287,23 +302,10 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
                 #epsilon=epsapprox*np.sum(ngrid>=np.max(ngrid)/2)/np.sum(ngrid>=-1)
             if err<N_e/coarse_sol_divisor:
                 break
-    #on axis potentials
-    free_on = free_space_solution[0,:]
-    sc_on = voltageGuess[0,:]
+            if isConfined == False:
+                break
 
-    peak_idx = int(np.argmax(free_on))
-
-    if peak_idx > 0:
-        barrier_idx = int(np.argmin(sc_on[0:peak_idx]))  # left barrier only may need to change if plasma shifts right
-
-        drop = sc_on[peak_idx] - sc_on[barrier_idx]
-        print(f"drop = {drop}")
-        isConfined = drop > 0
-    else:
-        isConfined = False
-
-    if isConfined == False:
-        drop = 0.0
+    print(f"drop = {drop}")
 
     NS=ngrid*volume_elements
     rmean=np.sqrt(np.sum(mursq*NS)/(np.sum(NS)))*rbound/nr
@@ -327,7 +329,7 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
         plt.title("potential")
         plt.colorbar()
         plt.show()
-    return ngrid,position_map_z,position_map_r,voltageGuess,free_space_solution,rmean,omega_r,volume_elements,isConfined,drop
+    return ngrid,position_map_z,position_map_r,voltageGuess,free_space_solution,rmean,omega_r,volume_elements,isConfined,drop,roi_left_ind
 
 def retune_omega_iteration(omega_r, r_mean, r_target): #for step 4
     r_ratio_sq = (r_mean / r_target)**2
@@ -432,8 +434,8 @@ def drop_for_rampfrac(plasma_config, electrode_input, rf): # finds "drop", i.e. 
         N_e=N_e, T_e=T_e, omega_r=omega_r, mur2=rad2, B=B2,
         electrodeConfig=(volts, electrode_borders),
         left=Llim, right=Rlim, rw=rw,
-        zpoints=40, rpoints=20, rfact=3.0,
-        plotting=False, coarse_sol_divisor=100,
+        zpoints=80, rpoints=40, rfact=3.0,
+        plotting=True, coarse_sol_divisor=50,
         InitializeWithPlasmaLength=False, fail_action='return_none', debug_tag=f"rampfrac={rf:.3f}"
     ) # a "rough" solve
     
@@ -562,6 +564,7 @@ def compute_esc_electrons(fine_sol, T_e): #, N_now, lastescapeE
     #position_map_z = fine_sol[1]
     volume_elements = fine_sol[7]
     free_space_solution = fine_sol[4]
+    roi_left_ind = fine_sol[10] #gets ROI from fine_sol
     N_cell = ngrid * volume_elements
     #N_cell = N_cell*N_now/np.sum(N_cell) #normalize grid of number of e- per cell so it sums to N_now
     escape_sum = np.zeros(len(N_cell[:,0])) #len apparently returns the number of r values     escapeE = np.zeros(len(N_cell))    
@@ -570,7 +573,7 @@ def compute_esc_electrons(fine_sol, T_e): #, N_now, lastescapeE
         oneD_solution = full_scc_solution[r, :] #Solution across z-axis per radial point, 
         oneD_free = free_space_solution[r, :]
 
-        axial_well_idx = np.argmax(oneD_free)  # index of axial well peak
+        axial_well_idx = np.argmax(oneD_free[roi_left_ind:])+roi_left_ind  # index of axial well peak. skips region outside of ROI 
         barrier_idx = np.argmin(oneD_solution[0:axial_well_idx])  # left barrier only
         
         dropnow = abs(oneD_solution[axial_well_idx] - oneD_solution[barrier_idx]) 
@@ -583,10 +586,10 @@ def compute_esc_electrons(fine_sol, T_e): #, N_now, lastescapeE
             onaxis_drop = dropnow
             barrier2_idx = np.argmin(oneD_free[0:axial_well_idx])  # left barrier only
             vacuum_drop = abs(oneD_free[axial_well_idx] - oneD_free[barrier2_idx]) 
-    print(f"escape_sum: {escape_sum}")
+    #print(f"escape_sum: {escape_sum}")
     return np.sum(escape_sum),onaxis_drop,vacuum_drop
 
-def escape_curve_scan(plasma_config, electrode_input, rampfrac_start, rampfrac_end, data_points = 25):
+def escape_curve_scan(plasma_config, electrode_input, rampfrac_start, rampfrac_end, data_points):
 
     # ===== ESCAPE CURVE LOOP USING KEEP_SUM METHOD ===== #
     #to be updated for consistency with new definition of compute_kept_electrons
@@ -618,18 +621,18 @@ def escape_curve_scan(plasma_config, electrode_input, rampfrac_start, rampfrac_e
             mur2=rad2, B=B2,
             electrodeConfig=(current_voltages, electrode_borders),
             left=Llim, right=Rlim, rw=rw,
-            zpoints=40, rpoints=20,
+            zpoints=80, rpoints=40,
             rfact=3.0, plotting=False,
             coarse_sol_divisor=100,
             InitializeWithPlasmaLength=False
-        )
+        ) #now more precise
 
         # Compute number of electrons that stay trapped
         N_entering = N_current
         N_erfc,onaxis_drop,vacuum_drop = compute_esc_electrons(fine_sol, T_e)
         
-        if onaxis_drop < 1*kb*T_e/q_e:
-            print("Plasma fully escaped -- stopping early.")
+        if not fine_sol[8]: #breaks when isConfined==False
+            print("Plasma not confined -- stopping early.")
             break
         
         escaped_list.append(N_erfc)
@@ -657,6 +660,7 @@ def escape_curve_scan(plasma_config, electrode_input, rampfrac_start, rampfrac_e
         if N_current < 1:
             print("Plasma fully escaped — stopping early.")
             break
+    ramp_values = ramp_values[:len(frac_escaped_list)+1]
     return ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list, vacdrop_list
 
 #%%===== PLOT ESCAPE CURVE ===== #
@@ -690,7 +694,7 @@ def plot_escape_curve(ramp_values, escaped_list, frac_escaped_list, drop_list, y
 # --- STEP 8 ---
 #%% Estimate temperature from escape curve
 
-def linear_model_T_diag(escaped_list, drop_list):
+def linear_model_T_diag(escaped_list, drop_list, title, xlabel_str, saveplotttitle, crop_factor_input = 0.5, plotting = True):
     """
     Linear fit model for temperature estimation from escape curve data.
     
@@ -698,10 +702,9 @@ def linear_model_T_diag(escaped_list, drop_list):
     :param drop_list: List of confinement ('drop') values in volts
     :return: Estimated temperature in Kelvin
     """
-    
-    escape_sublist=escaped_list[0:int(len(escaped_list)/2.0)]
-    drop_sublist=drop_list[0:int(len(drop_list)/2.0)]
-    
+    crop_factor=crop_factor_input
+    escape_sublist=escaped_list[0:int(len(escaped_list)*crop_factor)]
+    drop_sublist=drop_list[0:int(len(drop_list)*crop_factor)]
     #Linear temperature estimate from escape curve using
     #equation 8 from Eggleston 1992 paper
     dnep = np.log(escape_sublist[-1]/escape_sublist[0]) 
@@ -710,22 +713,212 @@ def linear_model_T_diag(escaped_list, drop_list):
     T_estimate = -q_e*1.05/(kb*slope)
     print(f"Estimated temperature from escape curve (last-first): {T_estimate:.2f} K")
     #Quick Check: Linear fit - but with fitting
-    curvefit = np.polyfit(drop_sublist, np.log(escape_sublist), 1)
+    curvefit,cov = np.polyfit(drop_sublist, np.log(escape_sublist), 1, cov=True)
     slope = curvefit[0]
     T_estimate2 = -q_e*1.05/(kb*slope)
     print(f"Estimated temperature from escape curve (polyfit): {T_estimate2} K")
+    print(f"cov: {cov}")
+    errors = np.sqrt(np.diag(cov))
+    print(f"err of slope: {errors[0]}")
 
-    plt.figure(figsize=(7, 5))
-    plt.plot(drop_list, np.log10(escaped_list), 'o', label="Data points")
-    plt.plot(drop_list, np.polyval(curvefit/np.log(10), drop_list), '-', label="Linear fit")
-    plt.xlabel("Confinement ('drop') in volts")
-    plt.ylabel("Log(Escaped electrons)")
-    plt.title("Log(Escaped electrons) vs Confinement with Linear Fit")
-    plt.grid(True)
-    return T_estimate2
+    if plotting == True:
+        plt.figure(figsize=(7, 5))
+        plt.gca().invert_xaxis()
+        plt.plot(drop_list, np.log10(escaped_list), '.', label="Solver data", ms=8.0,color="#ff1493")
+        plt.plot(drop_list, np.polyval(curvefit/np.log(10), drop_list), '-', label="Linear fit", color="#1418E2",ms=9.0)
+        plt.xlabel(xlabel_str, fontsize=18)
+        plt.ylabel(r"$\log(N_{\text{esc}}) ~ \text{/} ~ \text{A.U.}$", fontsize=18)    
+        plt.legend(fontsize=18)
+        plt.grid(True, "both")
+        plt.savefig(f'Escape_plot {saveplotttitle}.png', transparent=True)
+        plt.show()
+    return T_estimate2,errors[0]
+
+# %% loop function
+
+def evaporative_protocol(plasma_config,electrode_input,start_drop,end_drop,d_points,initial_scan_points):
+    starttime=str(datetime.now())
+    start_stopwatch = time.time()
+
+    print("--- solver_copy.py loaded ---")
+
+
+    # Input 
+    N_e, T_e, omega_r, rad2, B2 = plasma_config #number of electrons
+    initial_voltages, final_voltages, electrode_borders, Llim, Rlim, rw = electrode_input
+
+    # We iterate to find omega_r that achieves target radius within 1% tolerance
+
+    omega_r = find_omega_r(plasma_config, electrode_input)
+    plasma_config[2] = omega_r
+
+    print("--- Performing coarse scan to map rampfrac to drop ---")
+    grid, drops, grid_interp, drops_interp = coarse_scan(plasma_config, electrode_input, scan_points=initial_scan_points)
+    target_drop_eg = 10 * kb * T_e / q_e  # volts (this is 10 kT/e)
+    rf, achieved_drop = find_rf_for_target_drop(grid_interp,drops_interp,target_drop_eg, interp_points=10000)
+    current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages) * rf
+
+    print(f"--- Finding fine solution for target drop of {target_drop_eg:.3f} V ---")
+    fine_sol = find_solution(*plasma_config,electrodeConfig = [current_voltages,electrode_borders],
+                            left=Llim,right=Rlim,rw=rw,zpoints=80,rpoints=40,
+                            rfact=3.0,plotting=True,coarse_sol_divisor=100)
+
+
+    plot_density(fine_sol)
+
+
+    rampfrac_start = find_rf_for_target_drop(grid_interp,drops_interp,start_drop)[0]
+    rampfrac_end = find_rf_for_target_drop(grid_interp,drops_interp,end_drop)[0]
+
+    print(f"scanning from rampfrac {rampfrac_start:.3f} (drop {start_drop:.2f} V) to {rampfrac_end:.3f} (drop {end_drop:.2f} V)")
+    escape_curve_data = escape_curve_scan(plasma_config,
+                                        electrode_input,
+                                        rampfrac_start, 
+                                        rampfrac_end, 
+                                        data_points=d_points)
+
+    ramp_values = escape_curve_data[0]
+    escaped_list = escape_curve_data[1]
+    remaining_list = escape_curve_data[2]
+    frac_escaped_list = escape_curve_data[3]
+    drop_list = escape_curve_data[4]
+    vacdrop_list = escape_curve_data[5]
+
+    plot_escape_curve(ramp_values, escaped_list, frac_escaped_list, drop_list, yscale='linear')
+
+    # --- STEP 8 ---
+    # Estimate temperature from escape curve
+    print(f"inferred using drop list: {drop_list}")
+    T_inferred,_ = linear_model_T_diag(escaped_list, drop_list,"Log(Escaped electrons) vs Confinement with Linear Fit", 
+                                     xlabel_str=r"confinement voltage ('drop') / V",
+                            saveplotttitle="Escape_plot_drop",
+                            crop_factor_input=0.591)
+    #print(f"\nInferred Temperature from Escape Curve: {T_inferred:.2f} K")
+    print(f"Actual Temperature: {T_e:.2f} K")
+    print(f"Percentage Error: {abs(T_inferred - T_e) / T_e * 100:.2f}%")
+
+    print(f"inferred using vacdrop list: {vacdrop_list}")
+    Tvac,_ = linear_model_T_diag(escaped_list, vacdrop_list,"Log(Escaped electrons) vs Confinement with Linear Fit",
+                               xlabel_str="confinement voltage / V",
+                               saveplotttitle="Escape_plot_vac",
+                               crop_factor_input=0.591)
+    print(f"Actual Temperature: {T_e:.2f} K")
+    print(f"Percentage Error: {abs(Tvac - T_e) / T_e * 100:.2f}%")
+
+    end_stopwatch = time.time()
+    print(f"\nTotal execution time: {end_stopwatch - start_stopwatch:.2f} seconds")
+    stoptime=str(datetime.now())
+    print(f'{starttime}\tExecution start')
+    print(f'{stoptime}\tExecution finish')
+
+    return ramp_values, escaped_list, frac_escaped_list, drop_list, vacdrop_list
+
+#%%
+
+
+# Input 
+N_e=3e6 #number of electrons
+#T_e=1960 #plasma temperature in kelvin
+rad2=0.0008 #plasma radius in meters
+B2=2 #magnetic field in tesla
+freq_guess = 2.0e6  # initial guess for rotation frequency in Hz
+omega_r  = 2*np.pi*freq_guess
+
+# Initial Input Values
+initial_voltages=np.array([0,-63,-50,-130,0]) #in volts
+final_voltages=np.array([0,0,-50,-130,0], dtype=float) #in volts
+electrode_borders=[0.025,0.050,0.100,0.125] #in meters
+Llim=0.035
+Rlim=0.115
+rw=.017 #radius of inner wall of cylindrical electrodes, in meters
+rampfrac=0.9
+current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages) * rampfrac
+
+
+T_list = [1071.2681406941942]
+
+
+for T_current in T_list:
+    print(f"T = {T_current}")
+    
+    plasma_config = [float(N_e),float(T_current),float(omega_r),float(rad2),float(B2)]
+    electrode_input = [np.array(initial_voltages),np.array(final_voltages),np.array(electrode_borders),float(Llim),float(Rlim),float(rw)]
+
+    
+    #plasma_config[1] = T_current
+
+    start_drop = 20*kb*T_current/q_e  # volts (this is 10 kT/e)
+    end_drop = -1*kb*T_current/q_e # volts
+    d_points = 20  # number of data points in escape curve scan
+    initial_scan_points = 41
+    ramp_values, escaped_list, frac_escaped_list, drop_list, vacdrop_list = evaporative_protocol(plasma_config,electrode_input,start_drop,end_drop,d_points,initial_scan_points)
+
+    np.savetxt(f"T{T_current}_N{plasma_config[0]:.2e}_omega_r{plasma_config[2]:.2e}_rad{plasma_config[3]}_B{plasma_config[4]}.csv",
+               np.array([ramp_values, escaped_list, frac_escaped_list, drop_list, vacdrop_list]),delimiter=",")
+# %%
+T_actual = 1071.2681406941942
+
+
+
+Tvac, errvac = linear_model_T_diag(escaped_list, vacdrop_list,
+                           "Log(Escaped electrons) vs Confinement with Linear Fit, vacdrop", 
+                           xlabel_str="confinement voltage / V",
+                           saveplotttitle="Escape_plot_vac",
+                           crop_factor_input=0.591)
+print(f"Actual Temperature: {T_actual:.2f} K")
+print(f"Percentage Error: {abs(Tvac - T_actual) / T_actual * 100:.2f}%")
+
+
+Tdrop, errdrop = linear_model_T_diag(escaped_list, drop_list,"Log(Escaped electrons) vs Confinement with Linear Fit, vacdrop",
+                            xlabel_str=r"confinement voltage ('drop') / V",
+                            saveplotttitle="Escape_plot_drop",
+                            crop_factor_input=0.591)
+print(f"Actual Temperature: {T_actual:.2f} K")
+print(f"Percentage Error: {abs(Tdrop -T_actual) / T_actual * 100:.2f}%")
+
 
 # %%
 
+def find_crop_factor(cf_list):
+    errvac_list = []
+    errdrop_list = []
+    for cf in cf_list:
+        Tvac, errvac = linear_model_T_diag(escaped_list, vacdrop_list,
+                           "Log(Escaped electrons) vs Confinement with Linear Fit, vacdrop", 
+                           xlabel_str="Confinement / V",
+                           saveplotttitle="Escape_plot_vac",
+                           crop_factor_input=cf,
+                           plotting=False)
+
+        Tdrop, errdrop = linear_model_T_diag(escaped_list, drop_list,"Log(Escaped electrons) vs Confinement with Linear Fit, vacdrop",
+                                xlabel_str="Confinement ('drop') / V",
+                                saveplotttitle="Escape_plot_drop",
+                                crop_factor_input=cf,
+                                plotting=False)
+        #
+        # 
+        errvac_list.append(errvac)
+        errdrop_list.append(errdrop)
+    return cf_list,errvac_list,errdrop_list
+
+cf_list,errvac_list,errdrop_list = find_crop_factor(np.linspace(0.59,0.60,100))
+
+plt.plot(cf_list,errvac_list,label="vac_fit")
+plt.plot(cf_list,errdrop_list,label="drop_fit")
+plt.legend()
+plt.show()
+
+min_cf=cf_list[np.argmin(errvac_list)]
+min_cf_drop=cf_list[np.argmin(errdrop_list)]
+
+print(f"cf for best lin fit {min_cf}")
+print(f"cf for best lin fit (drop) {min_cf_drop}")
+print(f"idx: {np.argmin(errvac_list)}")
+# %%
+
+
+# %%
+"""
 
 starttime=str(datetime.now())
 start_stopwatch = time.time()
@@ -836,115 +1029,4 @@ print(f"\nTotal execution time: {end_stopwatch - start_stopwatch:.2f} seconds")
 stoptime=str(datetime.now())
 print(f'{starttime}\tExecution start')
 print(f'{stoptime}\tExecution finish')
-
-# %% loop function
-
-def evaporative_protocol(plasma_config,electrode_input):
-        
-    starttime=str(datetime.now())
-    start_stopwatch = time.time()
-
-    print("--- solver_copy.py loaded ---")
-
-
-    # Input 
-    N_e, T_e, omega_r, rad2, B2 = plasma_config #number of electrons
-    initial_voltages, final_voltages, electrode_borders, Llim, Rlim, rw = electrode_input
-
-    # We iterate to find omega_r that achieves target radius within 1% tolerance
-
-    omega_r = find_omega_r(plasma_config, electrode_input)
-    plasma_config[2] = omega_r
-
-    print("--- Performing coarse scan to map rampfrac to drop ---")
-    grid, drops, grid_interp, drops_interp = coarse_scan(plasma_config, electrode_input, scan_points=16)
-    target_drop_eg = 10 * kb * T_e / q_e  # volts (this is 10 kT/e)
-    rf, achieved_drop = find_rf_for_target_drop(grid_interp,drops_interp,target_drop_eg, interp_points=10000)
-    current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages) * rf
-
-    print(f"--- Finding fine solution for target drop of {target_drop_eg:.3f} V ---")
-    fine_sol = find_solution(*plasma_config,electrodeConfig = [current_voltages,electrode_borders],
-                            left=Llim,right=Rlim,rw=rw,zpoints=80,rpoints=40,
-                            rfact=3.0,plotting=True,coarse_sol_divisor=100)
-
-
-    plot_density(fine_sol)
-
-    start_drop = 20*kb*T_e/q_e  # volts (this is 10 kT/e)
-    end_drop = -10*kb*T_e/q_e # volts
-
-    rampfrac_start = find_rf_for_target_drop(grid_interp,drops_interp,start_drop)[0]
-    rampfrac_end = find_rf_for_target_drop(grid_interp,drops_interp,end_drop)[0]
-    d_points = 16  # number of data points in escape curve scan
-
-    print(f"scanning from rampfrac {rampfrac_start:.3f} (drop {start_drop:.2f} V) to {rampfrac_end:.3f} (drop {end_drop:.2f} V)")
-    escape_curve_data = escape_curve_scan(plasma_config,
-                                        electrode_input,
-                                        rampfrac_start, 
-                                        rampfrac_end, 
-                                        data_points=d_points)
-
-    ramp_values = escape_curve_data[0]
-    escaped_list = escape_curve_data[1]
-    remaining_list = escape_curve_data[2]
-    frac_escaped_list = escape_curve_data[3]
-    drop_list = escape_curve_data[4]
-    vacdrop_list = escape_curve_data[5]
-
-    plot_escape_curve(ramp_values, escaped_list, frac_escaped_list, drop_list, yscale='linear')
-
-    # --- STEP 8 ---
-    # Estimate temperature from escape curve
-    print(f"inferred using drop list: {drop_list}")
-    T_inferred = linear_model_T_diag(escaped_list, drop_list)
-    #print(f"\nInferred Temperature from Escape Curve: {T_inferred:.2f} K")
-    print(f"Actual Temperature: {T_e:.2f} K")
-    print(f"Percentage Error: {abs(T_inferred - T_e) / T_e * 100:.2f}%")
-
-    print(f"inferred using vacdrop list: {vacdrop_list}")
-    Tvac = linear_model_T_diag(escaped_list, vacdrop_list)
-    print(f"Actual Temperature: {T_e:.2f} K")
-    print(f"Percentage Error: {abs(Tvac - T_e) / T_e * 100:.2f}%")
-
-    end_stopwatch = time.time()
-    print(f"\nTotal execution time: {end_stopwatch - start_stopwatch:.2f} seconds")
-    stoptime=str(datetime.now())
-    print(f'{starttime}\tExecution start')
-    print(f'{stoptime}\tExecution finish')
-
-    return ramp_values, escaped_list, frac_escaped_list, drop_list, vacdrop_list
-
-#%%
-
-
-# Input 
-N_e=3e6 #number of electrons
-T_e=1960 #plasma temperature in kelvin
-rad2=0.0008 #plasma radius in meters
-B2=2 #magnetic field in tesla
-freq_guess = 2.0e6  # initial guess for rotation frequency in Hz
-omega_r  = 2*np.pi*freq_guess
-
-# Initial Input Values
-initial_voltages=np.array([0,-63,-10,-130,0]) #in volts
-final_voltages=np.array([0,120,-10,-130,0], dtype=float) #in volts
-electrode_borders=[0.025,0.050,0.100,0.125] #in meters
-Llim=0.035
-Rlim=0.115
-rw=.017 #radius of inner wall of cylindrical electrodes, in meters
-rampfrac=0.9
-current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages) * rampfrac
-
-plasma_config = [float(N_e),float(T_e),float(omega_r),float(rad2),float(B2)]
-electrode_input = [np.array(initial_voltages),np.array(final_voltages),np.array(electrode_borders),float(Llim),float(Rlim),float(rw)]
-
-T_list = [200,250,300,350,400]
-
-for T_current in T_list:
-    print(f"T = {T_current}")
-    plasma_config[1] = T_current
-    ramp_values, escaped_list, frac_escaped_list, drop_list, vacdrop_list = evaporative_protocol(plasma_config,electrode_input)
-
-    np.savetxt(f"T{T_current}_N{plasma_config[0]:.2e}_omega_r{plasma_config[2]:.2e}_rad{plasma_config[3]}_B{plasma_config[4]}.csv",
-               np.array([ramp_values, escaped_list, frac_escaped_list, drop_list, vacdrop_list]),delimiter=",")
-# %%
+"""
