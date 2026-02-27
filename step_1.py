@@ -31,46 +31,155 @@ def iter_all(substring, path):
     )
 
 #%%
-def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2, rfact): #used in final_SiPM_vs_VoltagePlot
-    ''' Gets the combined Electrode "Excitement/Voltage Drop" Profile 
-        without having to run the solver.
-        
-        Input: electrodeConfig: (voltages, borders)
-        Returns: free_space_solution (2D array of "Voltage Drop" values)
+def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2, rfact,
+                            debug=False, return_debug=False, debug_title=None):
+    ''' Gets the combined Electrode "Excitement/Voltage Drop" Profile without running solver.
+        If debug=True: plots axial_profile and highlights chosen trough/barrier points.
+        If return_debug=True: returns (VoltageDrop, debug_dict)
     '''
-    nr=rpoints
-    nz=zpoints
-    leftbound=left
-    rightbound=right
-    position_map_r=np.zeros((nr,nz))
-    position_map_z=np.zeros((nr,nz))
-    rbound=mur2*rfact
+    nr = rpoints
+    nz = zpoints
+    leftbound = left
+    rightbound = right
+    rbound = mur2 * rfact
+
+    position_map_r = np.zeros((nr, nz))
+    position_map_z = np.zeros((nr, nz))
     for rind in range(nr):
         for zind in range(nz):
-            position_map_z[rind,zind]=leftbound+(rightbound-leftbound)*(zind+.5)/(nz)
-            position_map_r[rind,zind]=rbound*rind/nr
-            
-    def getElectrodeSolution(left,right,voltage):
-        cs=2*voltage/(zeros[0]*special.j1(zeros[0]))
-        symmetricsolution=getFiniteSolution([cs],right-left,lambda r:voltage)
-        return lambda r,z: symmetricsolution(z-(left+right)/2,r)
+            position_map_z[rind, zind] = leftbound + (rightbound - leftbound) * (zind + 0.5) / nz
+            position_map_r[rind, zind] = rbound * rind / nr
 
-    electrode_voltages,electrode_borders=electrodeConfig
-    free_space_solution=np.zeros((nr,nz))
-    electrodes=[getElectrodeSolution(electrode_borders[i-1],electrode_borders[i],electrode_voltages[i]) 
-                for i in range(1,len(electrode_voltages)-1)]   
+    z_axis = position_map_z[0, :]  # cell centers along z
+    dz = (rightbound - leftbound) / nz
 
+    def getElectrodeSolution(left_e, right_e, voltage):
+        cs = 2 * voltage / (zeros[0] * special.j1(zeros[0]))
+        sym = getFiniteSolution([cs], right_e - left_e, lambda r: voltage)
+        return lambda r, z: sym(z - (left_e + right_e) / 2, r)
+
+    electrode_voltages, electrode_borders = electrodeConfig
+
+    free_space_solution = np.zeros((nr, nz))
+    electrodes = [
+        getElectrodeSolution(electrode_borders[i-1], electrode_borders[i], electrode_voltages[i])
+        for i in range(1, len(electrode_voltages) - 1)
+    ]
     for electrode in electrodes:
-        free_space_solution+=electrode(position_map_r,position_map_z)
-    
-    axial_profile = np.max(free_space_solution, axis=0)
-    peak_idx = np.argmax(axial_profile)
-    peak = axial_profile[peak_idx]
-    barrier = np.min(axial_profile[:peak_idx])
-    VoltageDrop = peak - barrier
-    #print(f"Calculated Voltage Drop: {VoltageDrop} V")
-    return VoltageDrop
+        free_space_solution += electrode(position_map_r, position_map_z)
 
+    axial_profile = free_space_solution[0, :]  # r=0 axial cut
+
+    # ---- slopes / thresholds ----
+    dVdz = np.gradient(axial_profile, dz)
+    abs_dVdz = np.abs(dVdz)
+    thr_slope = np.quantile(abs_dVdz[10:-1], 0.05)  # your current choice
+
+    # ---- local MINIMA (well bottoms) ----
+    is_local_min = np.zeros(nz, dtype=bool)
+    is_local_min[1:-1] = (axial_profile[1:-1] < axial_profile[:-2]) & (axial_profile[1:-1] <= axial_profile[2:])
+
+    is_flat_slope = abs_dVdz <= thr_slope
+    d2Vdz2 = np.gradient(dVdz, dz)
+
+    valid_min = is_local_min & is_flat_slope
+    valid_min[:10] = False
+    valid_min &= (d2Vdz2 > 0)  # concave up => minimum
+
+    mins = np.where(valid_min)[0]
+    if mins.size > 0:
+        trough_idx = mins[np.argmin(axial_profile[mins])]
+    else:
+        trough_idx = 10 + np.argmin(axial_profile[10:])  # fallback
+
+    # ---- local MAXIMA (barriers) ----
+    is_local_max = np.zeros(nz, dtype=bool)
+    is_local_max[1:-1] = (axial_profile[1:-1] > axial_profile[:-2]) & (axial_profile[1:-1] >= axial_profile[2:])
+
+    maxs = np.where(is_local_max)[0]
+    left_maxs = maxs[maxs < trough_idx]
+    if left_maxs.size > 0:
+        barrier_idx = left_maxs[-1]
+    else:
+        barrier_idx = np.argmax(axial_profile[:trough_idx])  # fallback
+
+    V_trough = axial_profile[trough_idx]
+    V_barrier = axial_profile[barrier_idx]
+    VoltageDrop = V_trough - V_barrier  # your sign convention
+
+    # ---- DEBUG PLOTS ----
+    if debug:
+        title = debug_title or "Drop debug"
+
+        # Plot 1: axial profile + chosen points
+        plt.figure(figsize=(10, 4))
+        plt.plot(z_axis, axial_profile, 'k-', lw=2, label="axial_profile (r=0)")
+
+        # candidate mins/maxs
+        plt.plot(z_axis[valid_min], axial_profile[valid_min], 'o', ms=5, alpha=0.6, label="valid minima candidates")
+        plt.plot(z_axis[is_local_max], axial_profile[is_local_max], 'o', ms=4, alpha=0.35, label="local maxima candidates")
+
+        # chosen points
+        plt.plot(z_axis[trough_idx], V_trough, 'o', ms=10, label=f"TROUGH idx={trough_idx} V={V_trough:.3g}")
+        plt.plot(z_axis[barrier_idx], V_barrier, 'o', ms=10, label=f"BARRIER idx={barrier_idx} V={V_barrier:.3g}")
+
+        plt.axvline(z_axis[trough_idx], ls="--", alpha=0.5)
+        plt.axvline(z_axis[barrier_idx], ls="--", alpha=0.5)
+
+        # show electrode borders (only those inside plotting range)
+        for b in electrode_borders:
+            if leftbound <= b <= rightbound:
+                plt.axvline(b, ls=":", alpha=0.4)
+
+        plt.title(f"{title} | Drop = {VoltageDrop:.4g} V")
+        plt.xlabel("z (m)")
+        plt.ylabel("V (arb)")
+        plt.grid(True, ls="--", alpha=0.5)
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+        # Plot 2: |dV/dz| and thr_slope + chosen points
+        plt.figure(figsize=(10, 3.5))
+        plt.plot(z_axis, abs_dVdz, 'k-', lw=2, label="|dV/dz|")
+        plt.axhline(thr_slope, ls="--", lw=2, alpha=0.7, label=f"thr_slope={thr_slope:.3g}")
+        plt.plot(z_axis[trough_idx], abs_dVdz[trough_idx], 'o', ms=8, label="at trough")
+        plt.plot(z_axis[barrier_idx], abs_dVdz[barrier_idx], 'o', ms=8, label="at barrier")
+        plt.xlabel("z (m)")
+        plt.ylabel("|dV/dz|")
+        plt.grid(True, ls="--", alpha=0.5)
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+        # Optional: show the whole 2D map if you want
+        plt.figure(figsize=(10, 4))
+        plt.imshow(free_space_solution, aspect='auto', origin='lower')
+        plt.title(f"{title} | free_space_solution (r vs z index)")
+        plt.xlabel("z index")
+        plt.ylabel("r index")
+        plt.colorbar(label="V (arb)")
+        plt.tight_layout()
+        plt.show()
+
+    debug_dict = {
+        "z_axis": z_axis,
+        "axial_profile": axial_profile,
+        "abs_dVdz": abs_dVdz,
+        "thr_slope": thr_slope,
+        "valid_min": valid_min,
+        "is_local_max": is_local_max,
+        "trough_idx": trough_idx,
+        "barrier_idx": barrier_idx,
+        "V_trough": V_trough,
+        "V_barrier": V_barrier,
+        "VoltageDrop": VoltageDrop,
+        "free_space_solution": free_space_solution,
+    }
+
+    if return_debug:
+        return VoltageDrop, debug_dict
+    return VoltageDrop
 #%%
 def auto_roi_from_dip(x, y, smooth_window=101, polyorder=3, baseline_quantile=0.90,
                       sigma_low=3.5, sigma_high=2.0, prepad=500): 
@@ -227,32 +336,34 @@ def fit_and_convert_u8(filename):
     
     #Final step for this function: substitute the volatges in as one of the electrodeConfig arg along with borders as the other.
 #%%
-def getTotalVoltageDropProfile(converted_voltages):
-    '''
-    Gets the total voltage drop profile for the given converted voltages by calling 
-    getElectrodeVoltageDrop for each voltage and putting them in a list. 
-    This will be used as the x-axis for the final plot of SiPM vs Voltage Drop.
-    
-    Inputs: converted_voltages (np.array) - voltages from fit
-    Returns: drops (list of voltage drops corresponding to each converted voltage).
-    '''
-    converted_voltages = np.asarray(converted_voltages)  #get the voltages as a numpy array for linspace and indexing
+def getTotalVoltageDropProfile(converted_voltages, debug_steps=(0, -1)):
+    converted_voltages = np.asarray(converted_voltages)
     v_start = float(converted_voltages[0])
     v_end   = float(converted_voltages[-1])
-    n_steps = len(converted_voltages)   
-    v_sweep = np.linspace(v_start, v_end, n_steps) #sets the sweep for voltage drop calculation
+    n_steps = len(converted_voltages)
+    v_sweep = np.linspace(v_start, v_end, n_steps)
 
-    #1.create for loop wuth getElectrodeVoltageDrop called inside to get voltage drop for each converted voltage
-    #2.list electrode voltages and borders with converted voltages as one of them
-    #3.put them as the initial argument in electrodeConfig along with borders:
-    electrode_voltages_list = [[0, v, 50, -130, 0] for v in v_sweep]
-    electrode_borders=[0.025,0.050,0.100,0.125]
+    electrode_borders = [0.025, 0.050, 0.100, 0.125]
     drops = []
-    for electrode_voltages in electrode_voltages_list:
+
+    # allow negative indexing in debug_steps (e.g. -1)
+    debug_steps_set = set([(s if s >= 0 else n_steps + s) for s in debug_steps])
+
+    for i, v in enumerate(v_sweep):
+        electrode_voltages = [0, v, 50, -130, 0]
         electrodeConfig = (electrode_voltages, electrode_borders)
-        drop = getElectrodeVoltageDrop(electrodeConfig, rpoints=20, zpoints=40, left=Llim, right=Rlim, mur2=rad2, rfact=3.0)
+
+        debug_now = (i in debug_steps_set)
+        drop = getElectrodeVoltageDrop(
+            electrodeConfig,
+            rpoints=20, zpoints=40,
+            left=Llim, right=Rlim,
+            mur2=rad2, rfact=3.0,
+            debug=debug_now,
+            debug_title=f"Step {i}/{n_steps-1} | v={v:.3g}"
+        )
         drops.append(drop)
-        
+
     return drops
 
 #%%
@@ -553,7 +664,7 @@ def best_linear_subwindow(xs, ys, iL, iR, min_pts=100, r2_min=0.97,
     return best[0], best[1], best[2]
 
 def extract_measured_temp(drops, sipm_roi_for_fit):
-    x = -np.asarray(drops, dtype=float) + 80.0
+    x = -np.asarray(drops, dtype=float)
     sipm = np.asarray(sipm_roi_for_fit, dtype=float)
 
     #Pairing-safe mask (same mask applied to x and sipm)
@@ -625,130 +736,85 @@ def extract_measured_temp(drops, sipm_roi_for_fit):
     print("candidate flank length:", iR - iL + 1)
     '''
     
-    #choose LOWER part of the rise as a CONTINUOUS interval using smoothed y.
-    # ys_s returned from auto_flank_from_slope aligns with xs2/ys2
-    y_sm = ys_s
-
+    # --- Pick a robust "lower-rise" fit window inside the detected flank ---
     seg = slice(iL, iR+1)
     xs_seg = xs[seg]
     y_raw  = ys[seg]
-    y_seg  = y_sm[seg]
+    y_sm   = ys_s[seg]          # smoothed y aligned to xs/ys
+    s_seg  = slope[seg]         # smoothed slope aligned to xs/ys
 
-    #levels of the rise computed on SMOOTHED y
-    y_lo = np.quantile(y_seg, 0.117)
-    y_hi = np.quantile(y_seg, 0.95)
-    dy_rise = y_hi - y_lo
+    Lseg = len(xs_seg)
+    if Lseg < 20:
+        raise RuntimeError(f"Flank segment too small (Lseg={Lseg}).")
 
-    #We’ll try a few “lower-rise” bands and take the first that gives a sane fit
-    #(lower band => earlier part of rise)
-    bands = [
-        (0.117, 0.30),
-        (0.12, 0.35),
-        (0.14, 0.40),
-        (0.15, 0.45),
-        (0.17, 0.50),
-    ]
+    # adaptive minimum points
+    min_pts_needed = min(160, max(30, int(0.35 * Lseg)))
 
-    min_pts_needed = 160  #widen/narrow this as you like (e.g., 80–200)
+    # define rise levels on SMOOTHED y
+    y10 = np.quantile(y_sm, 0.10)
+    y90 = np.quantile(y_sm, 0.90)
+    dy  = y90 - y10
 
-    best = None
+    # pick start 'a': where slope becomes meaningfully positive
+    smax = float(np.max(s_seg))
+    s_thr = 0.25 * smax if smax > 0 else 0.0
+    a_candidates = np.where(s_seg >= s_thr)[0]
+    a = int(a_candidates[0]) if a_candidates.size else int(np.argmax(s_seg))
 
-    for fa, fb in bands:
-        yA = y_lo + fa * dy_rise
-        yB = y_lo + fb * dy_rise
+    # nudge a so we’re not in the flat baseline
+    a2 = np.where(y_sm >= y10)[0]
+    if a2.size:
+        a = max(a, int(a2[0]))
 
-        idxA = np.where(y_seg >= yA)[0]
-        idxB = np.where(y_seg >= yB)[0]
-        if idxA.size == 0 or idxB.size == 0:
-            continue
-
-        a = int(idxA[0])
-        b0 = int(idxB[0])
-
-        #ensure minimum points (same as before)
-        b = b0
-        if (b - a + 1) < min_pts_needed:
-            b = min(len(xs_seg) - 1, a + min_pts_needed - 1)
-
-        #Extend b in chunks and stop when R² drops too much or slope changes too much.
-        step = 25
-        max_b = len(xs_seg) - 1
-
-        #base fit on the "good region" we already have
-        x0 = xs_seg[a:b+1]
-        y0 = y_raw[a:b+1]
-        m0, c0 = np.polyfit(x0, y0, 1)
-        yhat0 = m0*x0 + c0
-        ss_res0 = np.sum((y0 - yhat0)**2)
-        ss_tot0 = np.sum((y0 - np.mean(y0))**2) + 1e-12
-        r2_0 = 1 - ss_res0/ss_tot0
-
-        #thresholds: tune these gently
-        r2_drop_allow = 0.09      #allow some degradation as we extend
-        slope_change_allow = 0.27 #allow 20% slope change
-
-        best_b = b
-        best_r2 = r2_0
-
-        while best_b + step <= max_b:
-            cand_b = min(max_b, best_b + step)
-
-            xw = xs_seg[a:cand_b+1]
-            yw = y_raw[a:cand_b+1]
-
-            #must still rise overall (avoid plateau)
-            if (np.median(yw[-10:]) - np.median(yw[:10])) < 0.3:
+    # pick end 'b': first time we reach some fraction of the rise
+    targets = [0.30, 0.40, 0.50, 0.60, 0.70]
+    b = None
+    if dy > 1e-6:
+        for frac in targets:
+            yT = y10 + frac * dy
+            idx = np.where(y_sm >= yT)[0]
+            if idx.size:
+                b = int(idx[0])
                 break
 
-            m1, c1 = np.polyfit(xw, yw, 1)
-            if m1 <= 0:
-                break
+    # fallback if we couldn’t find a y-threshold end
+    if b is None:
+        b = min(Lseg - 1, a + min_pts_needed - 1)
 
-            yhat = m1*xw + c1
-            ss_res = np.sum((yw - yhat)**2)
-            ss_tot = np.sum((yw - np.mean(yw))**2) + 1e-12
-            r2_1 = 1 - ss_res/ss_tot
+    # enforce min points
+    b = max(b, min(Lseg - 1, a + min_pts_needed - 1))
 
-            #stop if it starts bending/plateauing (linearity deteriorates)
-            if r2_1 < (best_r2 - r2_drop_allow):
-                break
+    # cap away from saturation/top: don’t extend beyond ~90% level if possible
+    sat = np.where(y_sm >= y90)[0]
+    if sat.size:
+        b = min(b, int(sat[0]))
 
-            #stop if slope changes too much (curvature)
-            if abs(m1 - m0) / (abs(m0) + 1e-12) > slope_change_allow:
-                break
+    # final safety: if window is still too small, just grab first min_pts_needed from a
+    if (b - a + 1) < max(10, min_pts_needed // 2):
+        b = min(Lseg - 1, a + min_pts_needed - 1)
 
-            best_b = cand_b
-            best_r2 = r2_1
+    x_fit = xs_seg[a:b+1]
+    y_fit = y_raw[a:b+1]
 
-        #final fit window (same a, extended b)
-        x_fit = xs_seg[a:best_b+1]
-        y_fit = y_raw[a:best_b+1]
+    # last-resort fallback if x-span is tiny relative to the available flank span
+    if np.ptp(x_fit) < max(1e-4, 0.05 * np.ptp(xs_seg)):
+        a = 0
+        b = min(Lseg - 1, min_pts_needed - 1)
+        x_fit = xs_seg[a:b+1]
+        y_fit = y_raw[a:b+1]
 
-        #sanity: x span
-        if np.ptp(x_fit) < 0.03:
-            continue
+    # --- quick sanity checks + debug ---
+    if len(x_fit) < 2:
+        raise RuntimeError("Fit window ended up too small.")
 
-        #quick check for positive slope
-        m_tmp, c_tmp = np.polyfit(x_fit, y_fit, 1)
-        if m_tmp <= 0:
-            continue
+    m_tmp, c_tmp = np.polyfit(x_fit, y_fit, 1)
+    if m_tmp <= 0:
+        raise RuntimeError("Fit slope is not positive; window selection likely wrong.")
 
-        #compute r2 for reporting
-        yhat = m_tmp*x_fit + c_tmp
-        ss_res = np.sum((y_fit - yhat)**2)
-        ss_tot = np.sum((y_fit - np.mean(y_fit))**2) + 1e-12
-        r2_tmp = 1 - ss_res/ss_tot
-
-        best = (x_fit, y_fit, fa, fb, r2_tmp, m_tmp)
-        break
-
-    if best is None:
-        raise RuntimeError("Could not find a stable lower-rise fit interval (bands too strict).")
-
-    x_fit, y_fit, fa_used, fb_used, r2_used, m_used = best
-    print(f"Lower-rise band used: {fa_used:.2f}–{fb_used:.2f} of rise; pts={len(x_fit)}; r2={r2_used:.3f}; slope={m_used:.3g}")
-    print("x_fit range:", x_fit.min(), "to", x_fit.max())
-    
+    print(f"[fitwin] Lseg={Lseg}, min_pts={min_pts_needed}, a={a}, b={b}, "
+        f"xspan={np.ptp(x_fit):.4g}, yspan={np.ptp(y_fit):.4g}, slope={m_tmp:.4g}")
+    print("x_fit range:", float(x_fit.min()), "to", float(x_fit.max()))
+        
     #center x for nicer intercept / numerics
     x0 = np.mean(x_fit)
     m, c = np.polyfit(x_fit - x0, y_fit, 1)
@@ -793,7 +859,7 @@ Recompute_Drops=True #trun to False to skip voltage drop recomputation
 filepath1=iter_all('csv','../')[8]
 converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8(filepath1)
 if Recompute_Drops: 
-    drops = getTotalVoltageDropProfile(converted_voltages)   
+    drops = getTotalVoltageDropProfile(converted_voltages, debug_steps=(0, len(converted_voltages)//2, -1))   
 temp = extract_measured_temp(drops, sipm_roi_for_fit)
 print(f"Extracted temperature: {temp} K")
 
