@@ -17,6 +17,10 @@ rad2=0.0002 #plasma radius in meters
 kb=1.38064852e-23 #Boltzmann's constant in joules per kelvin
 qe=1.60217662e-19 #elementary charge in coulombs
 
+Mmax=1
+Nmax=20000
+zeros=[special.jn_zeros(m,Nmax) for m in range(Mmax)]
+
 #directory search function
 def iter_all(substring, path):
     return list(
@@ -34,10 +38,6 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
         Input: electrodeConfig: (voltages, borders)
         Returns: free_space_solution (2D array of "Voltage Drop" values)
     '''
-    Mmax=1
-    Nmax=20000
-    zeros=[special.jn_zeros(m,Nmax) for m in range(Mmax)]
-
     nr=rpoints
     nz=zpoints
     leftbound=left
