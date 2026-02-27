@@ -71,6 +71,13 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
     #print(f"Calculated Voltage Drop: {VoltageDrop} V")
     return VoltageDrop
 
+#use the same fix as in solver2
+#    free_on = free_space_solution[0,:]
+#    peak_idx = int(np.argmax(free_on))
+#    if peak_idx > 0:
+#        barrier_idx = int(np.argmin(free_on[0:peak_idx]))  # left barrier only may need to change if plasma shifts right
+#        drop = free_on[peak_idx] - free_on[barrier_idx]
+
 #%%
 def auto_roi_from_dip(x, y, smooth_window=101, polyorder=3, baseline_quantile=0.90,
                       sigma_low=3.5, sigma_high=2.0, prepad=500): 
