@@ -371,6 +371,7 @@ def getTotalVoltageDropProfile(converted_voltages, debug_steps=(0, -1)):
             debug_title=f"Step {i}/{n_steps-1} | v={v:.3g}"
         )
         drops.append(drop)
+        
     return drops
 
 #%%
