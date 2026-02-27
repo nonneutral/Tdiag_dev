@@ -34,7 +34,7 @@ def iter_all(substring, path):
 def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2, rfact,
                             debug=False, return_debug=False, debug_title=None):
     ''' Gets the combined Electrode "Excitement/Voltage Drop" Profile without running solver.
-        If debug=True: plots axial_profile and highlights chosen trough/barrier points.
+        If debug=True: plots axial_profile and highlights chosen barrier/peak points.
         If return_debug=True: returns (VoltageDrop, debug_dict)
     '''
     nr = rpoints
@@ -73,60 +73,66 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
     # ---- slopes / thresholds ----
     dVdz = np.gradient(axial_profile, dz)
     abs_dVdz = np.abs(dVdz)
-    thr_slope = np.quantile(abs_dVdz[10:-1], 0.05)  # your current choice
 
-    # ---- local MINIMA (well bottoms) ----
-    is_local_min = np.zeros(nz, dtype=bool)
-    is_local_min[1:-1] = (axial_profile[1:-1] < axial_profile[:-2]) & (axial_profile[1:-1] <= axial_profile[2:])
+    # make the quantile slice safe for small nz
+    lo = min(10, max(1, nz // 10))
+    hi = max(lo + 1, nz - 1)
+    thr_slope = np.quantile(abs_dVdz[lo:hi], 0.05)
 
     is_flat_slope = abs_dVdz <= thr_slope
     d2Vdz2 = np.gradient(dVdz, dz)
 
+    # ---- local MAXIMA (peak candidates) ----
+    is_local_max = np.zeros(nz, dtype=bool)
+    is_local_max[1:-1] = (axial_profile[1:-1] > axial_profile[:-2]) & (axial_profile[1:-1] >= axial_profile[2:])
+    valid_max = is_local_max & is_flat_slope
+    valid_max[:10] = False
+    valid_max &= (d2Vdz2 < 0)  # concave down => maximum
+
+    maxs = np.where(valid_max)[0]
+    if maxs.size > 0:
+        peak_idx = int(maxs[np.argmax(axial_profile[maxs])])
+    else:
+        peak_idx = int(np.argmax(axial_profile))  # fallback
+
+    # ---- local MINIMA (barrier candidates) ----
+    is_local_min = np.zeros(nz, dtype=bool)
+    is_local_min[1:-1] = (axial_profile[1:-1] < axial_profile[:-2]) & (axial_profile[1:-1] <= axial_profile[2:])
     valid_min = is_local_min & is_flat_slope
     valid_min[:10] = False
     valid_min &= (d2Vdz2 > 0)  # concave up => minimum
 
-    mins = np.where(valid_min)[0]
-    if mins.size > 0:
-        trough_idx = mins[np.argmin(axial_profile[mins])]
+    # barrier: minimum BEFORE the peak (prefer valid minima if they exist)
+    if peak_idx <= 0:
+        barrier_idx = 0
     else:
-        trough_idx = 10 + np.argmin(axial_profile[10:])  # fallback
+        mins_left = np.where(valid_min & (np.arange(nz) < peak_idx))[0]
+        if mins_left.size > 0:
+            barrier_idx = int(mins_left[np.argmin(axial_profile[mins_left])])
+        else:
+            barrier_idx = int(np.argmin(axial_profile[:peak_idx]))  # fallback
 
-    # ---- local MAXIMA (barriers) ----
-    is_local_max = np.zeros(nz, dtype=bool)
-    is_local_max[1:-1] = (axial_profile[1:-1] > axial_profile[:-2]) & (axial_profile[1:-1] >= axial_profile[2:])
-
-    maxs = np.where(is_local_max)[0]
-    left_maxs = maxs[maxs < trough_idx]
-    if left_maxs.size > 0:
-        barrier_idx = left_maxs[-1]
-    else:
-        barrier_idx = np.argmax(axial_profile[:trough_idx])  # fallback
-
-    V_trough = axial_profile[trough_idx]
-    V_barrier = axial_profile[barrier_idx]
-    VoltageDrop = V_trough - V_barrier  # your sign convention
+    V_peak = float(axial_profile[peak_idx])
+    V_barrier = float(axial_profile[barrier_idx])
+    VoltageDrop = V_peak - V_barrier  # your sign convention
 
     # ---- DEBUG PLOTS ----
     if debug:
         title = debug_title or "Drop debug"
 
-        # Plot 1: axial profile + chosen points
+        # Plot 1: axial profile + candidates + chosen points
         plt.figure(figsize=(10, 4))
         plt.plot(z_axis, axial_profile, 'k-', lw=2, label="axial_profile (r=0)")
 
-        # candidate mins/maxs
         plt.plot(z_axis[valid_min], axial_profile[valid_min], 'o', ms=5, alpha=0.6, label="valid minima candidates")
-        plt.plot(z_axis[is_local_max], axial_profile[is_local_max], 'o', ms=4, alpha=0.35, label="local maxima candidates")
+        plt.plot(z_axis[valid_max], axial_profile[valid_max], 'o', ms=5, alpha=0.6, label="valid maxima candidates")
 
-        # chosen points
-        plt.plot(z_axis[trough_idx], V_trough, 'o', ms=10, label=f"TROUGH idx={trough_idx} V={V_trough:.3g}")
+        plt.plot(z_axis[peak_idx], V_peak, 'o', ms=10, label=f"PEAK idx={peak_idx} V={V_peak:.3g}")
         plt.plot(z_axis[barrier_idx], V_barrier, 'o', ms=10, label=f"BARRIER idx={barrier_idx} V={V_barrier:.3g}")
 
-        plt.axvline(z_axis[trough_idx], ls="--", alpha=0.5)
+        plt.axvline(z_axis[peak_idx], ls="--", alpha=0.5)
         plt.axvline(z_axis[barrier_idx], ls="--", alpha=0.5)
 
-        # show electrode borders (only those inside plotting range)
         for b in electrode_borders:
             if leftbound <= b <= rightbound:
                 plt.axvline(b, ls=":", alpha=0.4)
@@ -143,7 +149,7 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
         plt.figure(figsize=(10, 3.5))
         plt.plot(z_axis, abs_dVdz, 'k-', lw=2, label="|dV/dz|")
         plt.axhline(thr_slope, ls="--", lw=2, alpha=0.7, label=f"thr_slope={thr_slope:.3g}")
-        plt.plot(z_axis[trough_idx], abs_dVdz[trough_idx], 'o', ms=8, label="at trough")
+        plt.plot(z_axis[peak_idx], abs_dVdz[peak_idx], 'o', ms=8, label="at peak")
         plt.plot(z_axis[barrier_idx], abs_dVdz[barrier_idx], 'o', ms=8, label="at barrier")
         plt.xlabel("z (m)")
         plt.ylabel("|dV/dz|")
@@ -152,7 +158,6 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
         plt.tight_layout()
         plt.show()
 
-        # Optional: show the whole 2D map if you want
         plt.figure(figsize=(10, 4))
         plt.imshow(free_space_solution, aspect='auto', origin='lower')
         plt.title(f"{title} | free_space_solution (r vs z index)")
@@ -168,10 +173,12 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
         "abs_dVdz": abs_dVdz,
         "thr_slope": thr_slope,
         "valid_min": valid_min,
+        "valid_max": valid_max,
+        "is_local_min": is_local_min,
         "is_local_max": is_local_max,
-        "trough_idx": trough_idx,
+        "peak_idx": peak_idx,
         "barrier_idx": barrier_idx,
-        "V_trough": V_trough,
+        "V_peak": V_peak,
         "V_barrier": V_barrier,
         "VoltageDrop": VoltageDrop,
         "free_space_solution": free_space_solution,
@@ -179,7 +186,7 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
 
     if return_debug:
         return VoltageDrop, debug_dict
-    
+
     return VoltageDrop
 #%%
 def auto_roi_from_dip(x, y, smooth_window=101, polyorder=3, baseline_quantile=0.90,
@@ -351,7 +358,7 @@ def getTotalVoltageDropProfile(converted_voltages, debug_steps=(0, -1)):
     debug_steps_set = set([(s if s >= 0 else n_steps + s) for s in debug_steps])
 
     for i, v in enumerate(v_sweep):
-        electrode_voltages = [0, v, 50, -130, 0]
+        electrode_voltages = [0, v, -50, -130, 0]
         electrodeConfig = (electrode_voltages, electrode_borders)
 
         debug_now = (i in debug_steps_set)
