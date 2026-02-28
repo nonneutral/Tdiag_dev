@@ -759,7 +759,7 @@ def linear_model_T_diag(escaped_list, drop_list, title, xlabel_str, saveplotttit
     return T_estimate2,errors[0]
 
 # %% loop function
-
+"""
 def evaporative_protocol(plasma_config,electrode_input,start_drop,end_drop,d_points,initial_scan_points):
     starttime=str(datetime.now())
     start_stopwatch = time.time()
@@ -836,5 +836,97 @@ def evaporative_protocol(plasma_config,electrode_input,start_drop,end_drop,d_poi
     print(f'{stoptime}\tExecution finish')
 
     return ramp_values, escaped_list, frac_escaped_list, drop_list, vacdrop_list
+"""
+#%%
+# ---- Step A ----
+def protocol_step_A_find_omega_r(plasma_config, electrode_input):
+    # Step A: omega_r = find_omega_r(...)
+    omega_r = find_omega_r(plasma_config, electrode_input)
+    plasma_config[2] = omega_r  # keep same behavior (in-place update)
+    return omega_r
 
-# %%
+
+# ---- Step B ----
+def protocol_step_B_coarse_scan(plasma_config, electrode_input, initial_scan_points):
+    # Step B: coarse_scan(...) → grid_interp, drops_interp (and also grid,drops)
+    grid, drops, grid_interp, drops_interp = coarse_scan(
+        plasma_config, electrode_input, scan_points=initial_scan_points
+    )
+    return grid, drops, grid_interp, drops_interp
+
+
+# ---- Step C ----
+def protocol_step_C_find_rf_for_target_drop(plasma_config, electrode_input, grid_interp, drops_interp, target_drop):
+    # Step C: find_rf_for_target_drop(...) → rf, current_voltages
+    N_e, T_e, omega_r, rad2, B2 = plasma_config
+    initial_voltages, final_voltages, electrode_borders, Llim, Rlim, rw = electrode_input
+
+    rf, achieved_drop = find_rf_for_target_drop(
+        grid_interp, drops_interp, target_drop, interp_points=10000
+    )
+    current_voltages = np.array(initial_voltages) + (final_voltages - initial_voltages) * rf
+    return rf, achieved_drop, current_voltages
+
+
+# ---- Step D ----
+def protocol_step_D_find_solution(plasma_config, electrode_input, current_voltages,
+                                  zpoints=80, rpoints=40, rfact=3.0,
+                                  plotting=True, coarse_sol_divisor=100):
+    # Step D: find_solution(...) → fine_sol
+    N_e, T_e, omega_r, rad2, B2 = plasma_config
+    initial_voltages, final_voltages, electrode_borders, Llim, Rlim, rw = electrode_input
+
+    fine_sol = find_solution(
+        *plasma_config,
+        electrodeConfig=[current_voltages, electrode_borders],
+        left=Llim, right=Rlim, rw=rw,
+        zpoints=zpoints, rpoints=rpoints,
+        rfact=rfact, plotting=plotting,
+        coarse_sol_divisor=coarse_sol_divisor
+    )
+    return fine_sol
+
+
+# ---- Step E ----
+def protocol_step_E_escape_curve_scan(plasma_config, electrode_input, rampfrac_start, rampfrac_end, d_points):
+    # Step E: escape_curve_scan(...) → ramp/escaped/drop lists
+    escape_curve_data = escape_curve_scan(
+        plasma_config,
+        electrode_input,
+        rampfrac_start,
+        rampfrac_end,
+        data_points=d_points
+    )
+    ramp_values = escape_curve_data[0]
+    escaped_list = escape_curve_data[1]
+    remaining_list = escape_curve_data[2]
+    frac_escaped_list = escape_curve_data[3]
+    drop_list = escape_curve_data[4]
+    vacdrop_list = escape_curve_data[5]
+    return ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list, vacdrop_list
+
+
+# ---- Step F ----
+def protocol_step_F_linear_model_T_diag_drop(escaped_list, drop_list):
+    # Step F: linear_model_T_diag(...) for inferred T (drop)
+    T_inferred, err = linear_model_T_diag(
+        escaped_list, drop_list,
+        "Log(Escaped electrons) vs Confinement with Linear Fit",
+        xlabel_str=r"confinement voltage ('drop') / V",
+        saveplotttitle="Escape_plot_drop",
+        crop_factor_input=0.591
+    )
+    return T_inferred, err
+
+
+# ---- Step G ----
+def protocol_step_G_linear_model_T_diag_vacdrop(escaped_list, vacdrop_list):
+    # Step G: linear_model_T_diag(...) for inferred T (vacdrop)
+    Tvac, err = linear_model_T_diag(
+        escaped_list, vacdrop_list,
+        "Log(Escaped electrons) vs Confinement with Linear Fit",
+        xlabel_str="confinement voltage / V",
+        saveplotttitle="Escape_plot_vac",
+        crop_factor_input=0.591
+    )
+    return Tvac, err
