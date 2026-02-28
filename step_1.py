@@ -4,9 +4,9 @@ import matplotlib.pyplot as plt
 import os
 from scipy import special
 from scipy.signal import savgol_filter
-from find_solution import getFiniteSolution
+#from find_solution import getFiniteSolution
+from solver2 import getFiniteSolution
 from datetime import datetime
-#from solver import getFiniteSolution - commented out to prevent solver running here
 
 now=str(datetime.now())
 print(f'{now}\tExecution start')
@@ -16,6 +16,7 @@ Rlim=0.110
 rad2=0.0002 #plasma radius in meters
 kb=1.38064852e-23 #Boltzmann's constant in joules per kelvin
 qe=1.60217662e-19 #elementary charge in coulombs
+rw=.017 #radius of inner wall of cylindrical electrodes, in meters
 
 Mmax=1
 Nmax=20000
@@ -55,7 +56,7 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
 
     def getElectrodeSolution(left_e, right_e, voltage):
         cs = 2 * voltage / (zeros[0] * special.j1(zeros[0]))
-        sym = getFiniteSolution([cs], right_e - left_e, lambda r: voltage)
+        sym = getFiniteSolution([cs], right_e - left_e, lambda r: voltage, rw=rw)
         return lambda r, z: sym(z - (left_e + right_e) / 2, r)
 
     electrode_voltages, electrode_borders = electrodeConfig
@@ -364,14 +365,22 @@ def getTotalVoltageDropProfile(converted_voltages, debug_steps=(0, -1)):
         debug_now = (i in debug_steps_set)
         drop = getElectrodeVoltageDrop(
             electrodeConfig,
-            rpoints=20, zpoints=40,
+            rpoints=30, zpoints=60,
             left=Llim, right=Rlim,
             mur2=rad2, rfact=3.0,
             debug=debug_now,
             debug_title=f"Step {i}/{n_steps-1} | v={v:.3g}"
         )
         drops.append(drop)
-        
+        print(f"Iteration {i}/{n_steps-1} : v={v:.3g}, drop={drop}")
+    
+    plt.plot(v_sweep, drops, 'o-')
+    plt.xlabel("Voltage Sweep")
+    plt.ylabel("Voltage Drop")
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.tight_layout()
+    plt.title("Conversion from Voltage Sweep to Voltage Drop")
+    plt.show()
     return drops
 
 #%%

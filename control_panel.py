@@ -1,0 +1,82 @@
+
+import numpy as np
+import matplotlib.pyplot as plt
+from solver2 import *
+
+# Input 
+N_e=3e6 #number of electrons
+#T_e=1960 #plasma temperature in kelvin
+rad2=0.0008 #plasma radius in meters
+B2=2 #magnetic field in tesla
+freq_guess = 2.0e6  # initial guess for rotation frequency in Hz
+omega_r  = 2*np.pi*freq_guess
+
+# Initial Input Values
+initial_voltages=np.array([0,-63,-50,-130,0]) #in volts
+final_voltages=np.array([0,0,-50,-130,0], dtype=float) #in volts
+electrode_borders=[0.025,0.050,0.100,0.125] #in meters
+Llim=0.035
+Rlim=0.115
+rw=.017 #radius of inner wall of cylindrical electrodes, in meters
+rampfrac=0.9
+current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages) * rampfrac
+
+
+T_list = [375.66]
+
+# Step1:
+
+# Step4:
+# Step5:
+# Step6:
+# Step7:
+# Step8: 
+
+
+
+
+
+
+#%%full scan for T_diag vs T_actual (step 4-8)
+for T_current in T_list:
+    print(f"T = {T_current}")
+    
+    plasma_config = [float(N_e),float(T_current),float(omega_r),float(rad2),float(B2)]
+    electrode_input = [np.array(initial_voltages),np.array(final_voltages),np.array(electrode_borders),float(Llim),float(Rlim),float(rw)]
+
+    
+    #plasma_config[1] = T_current
+
+    start_drop = 0.5 # volts (this is 10 kT/e)
+    end_drop = 0 # volts
+    d_points = 20  # number of data points in escape curve scan
+    initial_scan_points = 41
+    ramp_values, escaped_list, frac_escaped_list, drop_list, vacdrop_list = evaporative_protocol(plasma_config,electrode_input,start_drop,end_drop,d_points,initial_scan_points)
+
+    np.savetxt(f"T{T_current}_N{plasma_config[0]:.2e}_omega_r{plasma_config[2]:.2e}_rad{plasma_config[3]}_B{plasma_config[4]}.csv",
+               np.array([ramp_values, escaped_list, frac_escaped_list, drop_list, vacdrop_list]),delimiter=",")
+    
+    T_actual = T_current
+
+
+
+    Tvac, errvac = linear_model_T_diag(escaped_list, vacdrop_list,
+                            "Log(Escaped electrons) vs Confinement with Linear Fit, vacdrop", 
+                            xlabel_str="confinement voltage / V",
+                            saveplotttitle="Escape_plot_vac",
+                            crop_factor_input=0.591)
+    print(f"Actual Temperature: {T_actual:.2f} K")
+    print(f"Percentage Error: {abs(Tvac - T_actual) / T_actual * 100:.2f}%")
+
+
+    Tdrop, errdrop = linear_model_T_diag(escaped_list, drop_list,"Log(Escaped electrons) vs Confinement with Linear Fit, vacdrop",
+                                xlabel_str=r"confinement voltage ('drop') / V",
+                                saveplotttitle="Escape_plot_drop",
+                                crop_factor_input=0.591)
+    print(f"Actual Temperature: {T_actual:.2f} K")
+    print(f"Percentage Error: {abs(Tdrop -T_actual) / T_actual * 100:.2f}%")
+
+
+
+
+# %%
