@@ -838,26 +838,26 @@ def evaporative_protocol(plasma_config,electrode_input,start_drop,end_drop,d_poi
     return ramp_values, escaped_list, frac_escaped_list, drop_list, vacdrop_list
 """
 #%%
-# ---- Step A ----
-def protocol_step_A_find_omega_r(plasma_config, electrode_input):
-    # Step A: omega_r = find_omega_r(...)
+# ---- Step 1 ----
+def protocol_step_1_find_omega_r(plasma_config, electrode_input):
+    # Step 1: omega_r = find_omega_r(...)
     omega_r = find_omega_r(plasma_config, electrode_input)
     plasma_config[2] = omega_r  # keep same behavior (in-place update)
     return omega_r
 
 
-# ---- Step B ----
-def protocol_step_B_coarse_scan(plasma_config, electrode_input, initial_scan_points):
-    # Step B: coarse_scan(...) → grid_interp, drops_interp (and also grid,drops)
+# ---- Step 2 ----
+def protocol_step_2_coarse_scan(plasma_config, electrode_input, initial_scan_points):
+    # Step 2: coarse_scan(...) → grid_interp, drops_interp (and also grid,drops)
     grid, drops, grid_interp, drops_interp = coarse_scan(
         plasma_config, electrode_input, scan_points=initial_scan_points
     )
     return grid, drops, grid_interp, drops_interp
 
 
-# ---- Step C ----
-def protocol_step_C_find_rf_for_target_drop(plasma_config, electrode_input, grid_interp, drops_interp, target_drop):
-    # Step C: find_rf_for_target_drop(...) → rf, current_voltages
+# ---- Step 3 ----
+def protocol_step_3_find_rf_for_target_drop(plasma_config, electrode_input, grid_interp, drops_interp, target_drop):
+    # Step 3: find_rf_for_target_drop(...) → rf, current_voltages
     N_e, T_e, omega_r, rad2, B2 = plasma_config
     initial_voltages, final_voltages, electrode_borders, Llim, Rlim, rw = electrode_input
 
@@ -868,11 +868,11 @@ def protocol_step_C_find_rf_for_target_drop(plasma_config, electrode_input, grid
     return rf, achieved_drop, current_voltages
 
 
-# ---- Step D ----
-def protocol_step_D_find_solution(plasma_config, electrode_input, current_voltages,
+# ---- Step 4 ----
+def protocol_step_4_find_solution(plasma_config, electrode_input, current_voltages,
                                   zpoints=80, rpoints=40, rfact=3.0,
                                   plotting=True, coarse_sol_divisor=100):
-    # Step D: find_solution(...) → fine_sol
+    # Step 4: find_solution(...) → fine_sol
     N_e, T_e, omega_r, rad2, B2 = plasma_config
     initial_voltages, final_voltages, electrode_borders, Llim, Rlim, rw = electrode_input
 
@@ -887,9 +887,9 @@ def protocol_step_D_find_solution(plasma_config, electrode_input, current_voltag
     return fine_sol
 
 
-# ---- Step E ----
-def protocol_step_E_escape_curve_scan(plasma_config, electrode_input, rampfrac_start, rampfrac_end, d_points):
-    # Step E: escape_curve_scan(...) → ramp/escaped/drop lists
+# ---- Step 5 ----
+def protocol_step_5_escape_curve_scan(plasma_config, electrode_input, rampfrac_start, rampfrac_end, d_points):
+    # Step 5: escape_curve_scan(...) → ramp/escaped/drop lists
     escape_curve_data = escape_curve_scan(
         plasma_config,
         electrode_input,
@@ -906,9 +906,9 @@ def protocol_step_E_escape_curve_scan(plasma_config, electrode_input, rampfrac_s
     return ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list, vacdrop_list
 
 
-# ---- Step F ----
-def protocol_step_F_linear_model_T_diag_drop(escaped_list, drop_list):
-    # Step F: linear_model_T_diag(...) for inferred T (drop)
+# ---- Step 6 ----
+def protocol_step_6_linear_model_T_diag_drop(escaped_list, drop_list):
+    # Step 6: linear_model_T_diag(...) for inferred T (drop)
     T_inferred, err = linear_model_T_diag(
         escaped_list, drop_list,
         "Log(Escaped electrons) vs Confinement with Linear Fit",
@@ -919,9 +919,9 @@ def protocol_step_F_linear_model_T_diag_drop(escaped_list, drop_list):
     return T_inferred, err
 
 
-# ---- Step G ----
-def protocol_step_G_linear_model_T_diag_vacdrop(escaped_list, vacdrop_list):
-    # Step G: linear_model_T_diag(...) for inferred T (vacdrop)
+# ---- Step 7 ----
+def protocol_step_7_linear_model_T_diag_vacdrop(escaped_list, vacdrop_list):
+    # Step 7: linear_model_T_diag(...) for inferred T (vacdrop)
     Tvac, err = linear_model_T_diag(
         escaped_list, vacdrop_list,
         "Log(Escaped electrons) vs Confinement with Linear Fit",
