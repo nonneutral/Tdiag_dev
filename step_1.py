@@ -282,7 +282,12 @@ def fit_and_convert_u8(filename):
 
     sipm_data = df[0].values  #sipm (~escape rate)
     u8_data = df[1].values    #u8 excitations
-
+    
+    print("FILE:", filename)
+    print("df shape:", df.shape)
+    print(df.head())
+    print("len sipm:", len(sipm_data), "len u8:", len(u8_data))
+    
     mask, xL, xR, (iL, iR), baseline, sig, thr_high, thr_low = auto_roi_from_dip(u8_data, sipm_data) #Auto-detect ROI around dip
 
     t = np.arange(len(u8_data))
@@ -637,7 +642,7 @@ def extract_measured_temp(drops, sipm_roi_for_fit):
         raise RuntimeError(f"Flank segment too small (Lseg={Lseg}).")
 
     # adaptive minimum points
-    min_pts_needed = min(160, max(30, int(0.9 * Lseg)))
+    min_pts_needed = min(600, max(30, int(0.9 * Lseg)))
 
     # define rise levels on SMOOTHED y
     y10 = np.quantile(y_sm, 0.10)
@@ -774,3 +779,4 @@ for fname in os.listdir(folder):
     Inputs: converted_voltages (np.array) - voltages from fit, sipm_roi_for_fit (np.array) - corresponding SiPM data in the ROI
     Returns: Measured_Temp (float) - calculated temperature from the fit slope
 '''
+# %%
