@@ -78,7 +78,7 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
     # make the quantile slice safe for small nz
     lo = min(10, max(1, nz // 10))
     hi = max(lo + 1, nz - 1)
-    thr_slope = np.quantile(abs_dVdz[lo:hi], 0.05)
+    thr_slope = np.quantile(abs_dVdz[lo:hi], 0.07)
 
     is_flat_slope = abs_dVdz <= thr_slope
     d2Vdz2 = np.gradient(dVdz, dz)
@@ -128,8 +128,8 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
         plt.plot(z_axis[valid_min], axial_profile[valid_min], 'o', ms=5, alpha=0.6, label="valid minima candidates")
         plt.plot(z_axis[valid_max], axial_profile[valid_max], 'o', ms=5, alpha=0.6, label="valid maxima candidates")
 
-        plt.plot(z_axis[peak_idx], V_peak, 'o', ms=10, label=f"PEAK idx={peak_idx} V={V_peak:.3g}")
-        plt.plot(z_axis[barrier_idx], V_barrier, 'o', ms=10, label=f"BARRIER idx={barrier_idx} V={V_barrier:.3g}")
+        plt.plot(z_axis[peak_idx], V_peak, '^', ms=10, label=f"PEAK idx={peak_idx} V={V_peak:.3g}")
+        plt.plot(z_axis[barrier_idx], V_barrier, '^', ms=10, label=f"BARRIER idx={barrier_idx} V={V_barrier:.3g}")
 
         plt.axvline(z_axis[peak_idx], ls="--", alpha=0.5)
         plt.axvline(z_axis[barrier_idx], ls="--", alpha=0.5)
@@ -150,8 +150,8 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
         plt.figure(figsize=(10, 3.5))
         plt.plot(z_axis, abs_dVdz, 'k-', lw=2, label="|dV/dz|")
         plt.axhline(thr_slope, ls="--", lw=2, alpha=0.7, label=f"thr_slope={thr_slope:.3g}")
-        plt.plot(z_axis[peak_idx], abs_dVdz[peak_idx], 'o', ms=8, label="at peak")
-        plt.plot(z_axis[barrier_idx], abs_dVdz[barrier_idx], 'o', ms=8, label="at barrier")
+        plt.plot(z_axis[peak_idx], abs_dVdz[peak_idx], '^', ms=8, label="at peak")
+        plt.plot(z_axis[barrier_idx], abs_dVdz[barrier_idx], '^', ms=8, label="at barrier")
         plt.xlabel("z (m)")
         plt.ylabel("|dV/dz|")
         plt.grid(True, ls="--", alpha=0.5)
@@ -190,7 +190,7 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
 
     return VoltageDrop
 #%%
-def auto_roi_from_dip(x, y, smooth_window=101, polyorder=3, baseline_quantile=0.90,
+def auto_roi_from_dip(x, y, smooth_window=71, polyorder=3, baseline_quantile=0.90,
                       sigma_low=3.5, sigma_high=2.0, prepad=500): 
     '''
     Automatically detects a dip in the data and defines a region of interest (ROI) around it.
@@ -260,7 +260,7 @@ def auto_roi_from_dip(x, y, smooth_window=101, polyorder=3, baseline_quantile=0.
     i_left = max(0, i_left - prepad)
 
     mask = np.zeros(n, dtype=bool)
-    mask[i_left:i0+1] = True     
+    mask[i_left:i0+101] = True     
 
     return mask, x[i_left], x[i0], (i_left, i0), baseline, sigma, thr_high, thr_low
 
@@ -372,7 +372,7 @@ def getTotalVoltageDropProfile(converted_voltages, debug_steps=(0, -1)):
             debug_title=f"Step {i}/{n_steps-1} | v={v:.3g}"
         )
         drops.append(drop)
-        print(f"Iteration {i}/{n_steps-1} : v={v:.3g}, drop={drop}")
+        #print(f"Iteration {i}/{n_steps-1} : v={v:.3g}, drop={drop}")
     
     plt.plot(v_sweep, drops, 'o-')
     plt.xlabel("Voltage Sweep")
@@ -384,108 +384,8 @@ def getTotalVoltageDropProfile(converted_voltages, debug_steps=(0, -1)):
     return drops
 
 #%%
-'''
-def longest_true_run(mask):
-    mask = np.asarray(mask, dtype=bool)
-    if mask.size == 0 or not mask.any():
-        return None, None
-    idx = np.flatnonzero(mask)
-    breaks = np.where(np.diff(idx) > 1)[0]
-    starts = np.r_[idx[0], idx[breaks + 1]]
-    ends   = np.r_[idx[breaks], idx[-1]]
-    lengths = ends - starts + 1
-    j = np.argmax(lengths)
-    return int(starts[j]), int(ends[j])
-
-def pick_flank_region(xs, ys, min_pts=80):
-    xs = np.asarray(xs, float)
-    ys = np.asarray(ys, float)
-
-    w = min(101, len(ys) - (1 - (len(ys) % 2)))
-    if w >= 9:
-        if w % 2 == 0: w -= 1
-        ys_s = savgol_filter(ys, w, 2)
-    else:
-        ys_s = ys
-
-    dy = np.gradient(ys_s, xs)
-    dy_max = np.nanmax(dy)
-
-    # relax threshold until we get a decent chunk of points
-    for frac in [0.8, 0.6, 0.45, 0.35, 0.25, 0.18, 0.12]:
-        mask = np.isfinite(dy) & (dy > frac * dy_max)
-        iL, iR = longest_true_run(mask)
-        if iL is not None and (iR - iL + 1) >= min_pts:
-            return iL, iR, ys_s
-
-    # fallback: take mid 20–80% of smoothed y (usually the "linear-ish" part)
-    ylo = np.quantile(ys_s, 0.2)
-    yhi = np.quantile(ys_s, 0.8)
-    mask = (ys_s >= ylo) & (ys_s <= yhi)
-    iL, iR = longest_true_run(mask)
-    if iL is None or (iR - iL + 1) < 10:
-        raise RuntimeError("Could not find a stable flank region.")
-    return iL, iR, ys_s
-
-def extract_measured_temp(drops, sipm_roi_for_fit):
-    x = -np.asarray(drops, dtype=float)
-    sipm = np.asarray(sipm_roi_for_fit, dtype=float)
-
-    # 1) Pairing-safe mask (same mask applied to x and sipm)
-    good = np.isfinite(x) & np.isfinite(sipm) & (sipm < 0)
-
-    print("len(drops):", len(drops), "len(sipm):", len(sipm), "len(good):", good.sum())
-    print("drops: nan", np.isnan(x).sum(), "inf", np.isinf(x).sum(),
-          "min", np.nanmin(x), "max", np.nanmax(x))
-    print("sipm:  nan", np.isnan(sipm).sum(), "inf", np.isinf(sipm).sum(),
-          "min", np.nanmin(sipm), "max", np.nanmax(sipm))
-
-    x = x[good]
-    rate = -sipm[good]
-
-    # 2) prevent log(0) -> -inf
-    eps = max(1e-12, np.percentile(rate, 1) * 1e-3)
-    y = np.log(np.maximum(rate, eps))
-
-    # 3) sort
-    order = np.argsort(x)
-    xs = x[order]
-    ys = y[order]
-
-    # 4) final finite cleanup before polyfit
-    finite = np.isfinite(xs) & np.isfinite(ys)
-    xs = xs[finite]
-    ys = ys[finite]
-
-    iL, iR, ys_s = pick_flank_region(xs, ys, min_pts=80)
-
-    x_fit = xs[iL:iR+1]
-    y_fit = ys[iL:iR+1]
-
-    # (optional but nice) center x so intercept isn't huge
-    x0 = np.mean(x_fit)
-    m, c = np.polyfit(x_fit - x0, y_fit, 1)
-    b = c - m*x0   # back to y = m*x + b
-
-    print("fit pts:", len(x_fit), "slope m:", m)
-    Measured_Temp = qe*1.05/(kb*abs(m))
-    
-    plt.figure(figsize=(10,4))
-    plt.plot(xs, ys, 'o-', markersize=3, alpha=0.5, label="log(-SiPM)")
-    plt.plot(x_fit, y_fit, 'o', markersize=4, label="fit region")
-    xline = np.linspace(x_fit.min(), x_fit.max(), 200)
-    plt.plot(xline, m*xline + b, 'r-', linewidth=2, label=f"fit: y={m:.3g}x+{b:.3g}")
-    plt.xlabel("Flipped Voltage Drop (-V)")
-    plt.ylabel("log(-SiPM)")
-    plt.grid(True, linestyle="--", alpha=0.7)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-    return Measured_Temp
-'''
 def auto_flank_from_slope(xs, ys,
-                          smooth_window=101, polyorder=2,
+                          smooth_window=71, polyorder=2,
                           baseline_quantile=0.25,   # <-- IMPORTANT: use LOW quantile for "flat" slopes
                           sigma_low=4.0, sigma_high=2.0,
                           pad_points=10, min_pts=50,
@@ -503,7 +403,7 @@ def auto_flank_from_slope(xs, ys,
     n = len(xs)
     if n < 30:
         raise ValueError(f"Not enough points for flank detection (n={n}).")
-
+    
     # --- smooth y ---
     w = min(smooth_window, n - (1 - (n % 2)))
     if w >= 9:
@@ -513,41 +413,73 @@ def auto_flank_from_slope(xs, ys,
         ys_s = ys.copy()
 
     dy_raw = np.gradient(ys_s, xs) #Slope
+   
+    #if abs_slope:
+    #    dy_use = np.abs(dy_raw)
+    #else:
+    #    # IMPORTANT: rising edge only (kills baseline & negative-slope junk)
+    #    dy_use = np.clip(dy_raw, 0, None)
 
-    if abs_slope:
-        dy_use = np.abs(dy_raw)
-    else:
-        # IMPORTANT: rising edge only (kills baseline & negative-slope junk)
-        dy_use = np.clip(dy_raw, 0, None)
+    dy_use = np.zeros_like(ys)
+    dy_use_err = np.zeros_like(ys)
+    curvature_use = np.zeros_like(ys)
+    window_size = smooth_window 
+    
+    for start in range(len(ys) - window_size + 1):
+        end = start + window_size
+        middle = (start + end) // 2
+        xs_window = xs[start:end]
+        ys_window = ys[start:end]
+        
+        # find lin fit
+        p, cov = np.polyfit(xs_window, ys_window, 1, cov=True)
+        
+        slope = p[0]
+        intercept = p[1]
+        dy_use[middle] = np.abs(slope)  # use center point for smoothed value
+        dy_use_err[middle] = np.sqrt(cov[0, 0])  # rough error estimate
+        p2, cov2 = np.polyfit(xs_window, ys_window, 2, cov=True)
+        
+        p2prime = 2 * p2[0] * xs[middle] + p2[1]
+        p2prime2 = 2 * p2[0]
+        curvature = abs(p2prime2) / (1 + p2prime**2)**1.5
+        curvature_use[middle] = abs(curvature)
 
     #smooth the slope itself so single-point dips don't chop the region
     w_dy = min(151, n - (1 - (n % 2)))
     if w_dy >= 9:
         if w_dy % 2 == 0: w_dy -= 1
-        dy_use = savgol_filter(dy_use, w_dy, 2)
+        dy_use_s = savgol_filter(dy_use, w_dy, 2)
+        curvature_use_s = np.abs(savgol_filter(curvature_use, w_dy, 2))
+        dy_use_err_s = savgol_filter(dy_use_err, w_dy, 2)
 
-
+    #dy_use = dy_use_s
+    #curvature_use = np.abs(curvature_use_s)
     #baseline slope: use the FLATTEST portion (lowest quantile)
-    q = np.quantile(dy_use, baseline_quantile)
-    lo = dy_use[dy_use <= q]
+    q = np.quantile(dy_use_s, baseline_quantile)
+    lo = dy_use_s[dy_use_s <= q]
 
     baseline = np.median(lo)
     mad = np.median(np.abs(lo - baseline))
     sigma = 1.4826 * mad if mad > 0 else (np.std(lo) + 1e-12)
 
-    i0 = int(np.argmax(dy_use))
-    peak = dy_use[i0]
+    i0 = int(np.argmax(dy_use_s))
+    peak = dy_use_s[i0]
 
-    thr_low  = baseline + sigma_low  * sigma
-    thr_high = baseline + sigma_high * sigma
+    baseline_to_peak = peak - baseline
+
+    thr_low  = baseline + baseline_to_peak * 0.25  # must cross this to count as rising edge
+    #thr_high = baseline + sigma_high * sigma
+    thr_high = peak - baseline_to_peak * 0.25  #hysteresis from the peak (not the baseline) - important for cases where baseline is noisy or has a nonzero slope
+    #thr_curve = np.quantile(curvature_use_s, 0.10)  # also require high curvature to avoid flat regions with noise spikes
 
     def attempt(sl, sh, mp):
-        tl = baseline + sl * sigma
-        th = baseline + sh * sigma
+        #tl = baseline + sl * sigma
+        #th = baseline + sh * sigma
         #IMPORTANT: don’t let "th" be tiny; keep only the steep part near the peak
-        th = max(th, 0.04 * peak)   #0.10–0.25 are typical; bigger = narrower
-
-
+        #th = max(thr_high, 0.90 * peak)   #0.10–0.25 are typical; bigger = narrower
+        tl = thr_low
+        th = thr_high
         if peak < tl:
             return None, None, th, tl
 
@@ -588,8 +520,48 @@ def auto_flank_from_slope(xs, ys,
 
     iL, iR, thr_high, thr_low = attempt(sigma_low, sigma_high, min_pts)
 
+    fig, axes = plt.subplots(5, 1, figsize=(10, 8), sharex=True)
+    axes[0].plot(xs, ys, label="raw")
+    axes[0].plot(xs, ys_s, label="smoothed", markersize=3)
+    axes[0].set_ylabel("y")
+    axes[0].legend()
+    axes[0].grid(True)
+
+    axes[1].plot(xs, dy_raw, label="raw slope")
+    axes[1].set_ylabel("dy/dx")
+    axes[1].legend()
+    axes[1].grid(True)
+    
+    axes[2].plot(xs, dy_use, label="slope")
+    axes[2].plot(xs, dy_use_s, label="slope (smoothed)")
+    axes[2].set_ylabel("|dy/dx|")
+    axes[2].axhline(thr_low, ls="--", label=f"thr_low={thr_low:.3g}", color="r")
+    axes[2].axhline(thr_high, ls="--", label=f"thr_high={thr_high:.3g}", color="r")
+    axes[2].axvline(xs[i0], ls=":", label=f"peak at x={xs[i0]:.3g}", color="m")
+    axes[2].axvspan(xs[iL], xs[iR], alpha=0.2, color="y", label=f"flank region [{xs[iL]:.3g}, {xs[iR]:.3g}]")
+    axes[2].legend()
+    axes[2].grid(True)
+
+    axes[3].plot(xs, dy_use_err, label="slope error estimate")
+    axes[3].plot(xs, dy_use_err_s, label="slope error estimate (smoothed)")
+    axes[3].set_xlabel("x")
+    axes[3].set_ylabel("slope error")
+    axes[3].legend()
+    axes[3].grid(True)
+
+    axes[4].plot(xs, curvature_use, label="curvature estimate")
+    axes[4].plot(xs, curvature_use_s, label="curvature estimate (smoothed)")
+    axes[4].set_xlabel("x")
+    axes[4].set_ylabel("curvature")
+    axes[4].set_yscale("log")
+    axes[4].legend()
+    axes[4].grid(True)
+
+    plt.tight_layout()
+    plt.show()
     if relax and iL is None:
         #progressively easier thresholds + smaller min_pts
+        print("iL is None")
         for (sl, sh, mp) in [
             (3.0, 1.5, min_pts),
             (2.5, 1.2, min_pts),
@@ -611,75 +583,6 @@ def auto_flank_from_slope(xs, ys,
 
     return (iL, iR), baseline, sigma, thr_high, thr_low, dy_use, ys_s, xs, ys
 
-def best_linear_subwindow(xs, ys, iL, iR, min_pts=100, r2_min=0.97,
-                          y_floor=None, y_cap=None):
-    if iL is None or iR is None:
-        return None, None, np.nan
-
-    L = iR - iL + 1
-    if L < min_pts:
-        return iL, iR, np.nan
-
-    best = None
-    best_len = -1
-    best_mean_y = np.inf
-    best_r2 = -np.inf
-
-    for a in range(iL, iR - min_pts + 1):
-        for b in range(a + min_pts - 1, iR + 1):
-            xw = xs[a:b+1]
-            yw = ys[a:b+1]
-
-            if np.ptp(xw) < 1e-12:
-                continue
-
-            #y-band gate (prevents choosing the very top saturation part)
-            if y_floor is not None and np.min(yw) < y_floor:
-                continue
-            if y_cap is not None and np.max(yw) > y_cap:
-                continue
-
-            #reject flat windows (R^2 becomes meaningless)
-            if np.ptp(yw) < 0.4:
-                continue
-
-            m, c = np.polyfit(xw, yw, 1)
-
-            #rising only
-            if m <= 0:
-                continue
-
-            yhat = m*xw + c
-            ss_res = np.sum((yw - yhat)**2)
-            ss_tot = np.sum((yw - np.mean(yw))**2)
-            if ss_tot < 1e-8:
-                continue
-
-            r2 = 1 - ss_res/(ss_tot + 1e-12)
-            if not np.isfinite(r2):
-                continue
-
-            win_len = (b - a + 1)
-            mean_y = float(np.mean(yw))
-
-            # choose LONGEST window that passes r2_min;
-            # tie-break: pick LOWER mean_y (earlier part of rise) 
-            if r2 >= r2_min:
-                if (win_len > best_len) or (win_len == best_len and mean_y < best_mean_y):
-                    best_len = win_len
-                    best_mean_y = mean_y
-                    best = (a, b, r2)
-
-            #fallback if nothing meets r2_min
-            if best is None and r2 > best_r2:
-                best_r2 = r2
-                best = (a, b, r2)
-
-    if best is None:
-        return iL, iR, np.nan
-
-    return best[0], best[1], best[2]
-
 def extract_measured_temp(drops, sipm_roi_for_fit):
     x = -np.asarray(drops, dtype=float)
     sipm = np.asarray(sipm_roi_for_fit, dtype=float)
@@ -688,9 +591,9 @@ def extract_measured_temp(drops, sipm_roi_for_fit):
     good = np.isfinite(x) & np.isfinite(sipm) & (sipm < 0)
 
     print("len(drops):", len(drops), "len(sipm):", len(sipm), "len(good):", good.sum())
-    print("drops: nan", np.isnan(x).sum(), "inf", np.isinf(x).sum(),
+    print("drops: is_nan", np.isnan(x).sum(), "inf", np.isinf(x).sum(),
           "min", np.nanmin(x), "max", np.nanmax(x))
-    print("sipm:  nan", np.isnan(sipm).sum(), "inf", np.isinf(sipm).sum(),
+    print("sipm:  is_nan", np.isnan(sipm).sum(), "inf", np.isinf(sipm).sum(),
           "min", np.nanmin(sipm), "max", np.nanmax(sipm))
 
     x = x[good]
@@ -720,41 +623,10 @@ def extract_measured_temp(drops, sipm_roi_for_fit):
     #IMPORTANT: from this point onward, use xs2/ys2 (the cleaned arrays the flank indices refer to)
     xs = xs2
     ys = ys2
-    '''
-    # Gate to the rising branch: throw away the bottom (flat baseline) part of the flank
-    seg = slice(iL, iR+1)
-    y_cut = np.quantile(ys[seg], 0.65)          # keep top 35% of y values inside flank
-    keep = np.where(ys[seg] >= y_cut)[0]
-
-    if keep.size > 0:
-        iL = iL + keep[0]                       # shift left edge to where rise has started
-
-    L = iR - iL + 1
-    min_pts_sub = min(100, L)
-    # This is the key: force fit to the LOWER/MID part of the rise, not the top
-    y_floor = np.quantile(ys[seg], 0.35)   # excludes baseline-ish bottom
-    y_cap   = np.quantile(ys[seg], 0.80)   # excludes top 20% (saturation-ish)
-
-    # --- Choose a “best” linear subwindow inside the flank ---
-    iL2, iR2, r2 = best_linear_subwindow(xs, ys, iL, iR, min_pts=min_pts_sub, r2_min=0.970, y_floor=y_floor, y_cap=y_cap)
-
-    # fallback safety
-    if iL2 is None or iR2 is None:
-        iL2, iR2 = iL, iR
-
-    x_fit = xs[iL2:iR2+1]
-    y_fit = ys[iL2:iR2+1]
-
-    if len(x_fit) < 2:
-        raise RuntimeError("Fit window ended up too small.")
-
-    print("flank length:", L, "min_pts_sub:", min_pts_sub, "r2:", r2)
-    print("x_fit range:", x_fit.min(), "to", x_fit.max(), "fit pts:", len(x_fit))
-    print("candidate flank length:", iR - iL + 1)
-    '''
     
     # --- Pick a robust "lower-rise" fit window inside the detected flank ---
     seg = slice(iL, iR+1)
+    #seg = np.arange(iL, iR+1)
     xs_seg = xs[seg]
     y_raw  = ys[seg]
     y_sm   = ys_s[seg]          # smoothed y aligned to xs/ys
@@ -765,7 +637,7 @@ def extract_measured_temp(drops, sipm_roi_for_fit):
         raise RuntimeError(f"Flank segment too small (Lseg={Lseg}).")
 
     # adaptive minimum points
-    min_pts_needed = min(160, max(30, int(0.35 * Lseg)))
+    min_pts_needed = min(160, max(30, int(0.9 * Lseg)))
 
     # define rise levels on SMOOTHED y
     y10 = np.quantile(y_sm, 0.10)
