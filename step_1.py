@@ -749,16 +749,21 @@ def extract_measured_temp(drops, sipm_roi_for_fit):
     return Measured_Temp
 
 #%% - TEST RUN
+
+def analyse_experimental_results(filepath1, Recompute_Drops=True):
+    converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8(filepath1)
+    if Recompute_Drops: 
+        drops = getTotalVoltageDropProfile(converted_voltages, debug_steps=(0, len(converted_voltages)//2, -1))   
+    temp = extract_measured_temp(drops, sipm_roi_for_fit)
+    print(f"Extracted temperature: {temp} K")
+
+    now=str(datetime.now())
+    print(f'{now}\tExecution complete')
+    return temp
+
 Recompute_Drops=True #trun to False to skip voltage drop recomputation 
 filepath1=iter_all('csv','../')[8]
-converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8(filepath1)
-if Recompute_Drops: 
-    drops = getTotalVoltageDropProfile(converted_voltages, debug_steps=(0, len(converted_voltages)//2, -1))   
-temp = extract_measured_temp(drops, sipm_roi_for_fit)
-print(f"Extracted temperature: {temp} K")
-
-now=str(datetime.now())
-print(f'{now}\tExecution complete')
+measured_temp = analyse_experimental_results(filepath1, Recompute_Drops=Recompute_Drops)
 
 #general cross-platform code for processing all files in a directory - but commneted out for testing atm.
 '''
