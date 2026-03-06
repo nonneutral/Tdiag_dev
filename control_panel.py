@@ -117,18 +117,20 @@ d_points = 50
 initial_scan_points = 41
 
 #%% Step 1: retune omega_r
-# -------------------------
+
 omega_r = protocol_step_1_find_omega_r(plasma_config, electrode_input)
 # plasma_config[2] updated in-place
 
-#%% Step 2: coarse scan -> (grid_interp, drops_interp)
+#%% -------------------------
+# Step 2: coarse scan -> (grid_interp, drops_interp)
 # -------------------------
 print("--- Performing coarse scan to map rampfrac to drop ---")
 grid, drops, grid_interp, drops_interp = protocol_step_2_coarse_scan(
     plasma_config, electrode_input, initial_scan_points
 )
 
-#%% Step 3: find rampfrac correpsonding to target drop of 10 kT/e 
+#%% -------------------------
+# Step 3: find rampfrac correpsonding to target drop of 10 kT/e 
 # -------------------------
 target_drop_eg = 10 * kb * T_current / q_e
 rf_eg, achieved_drop_eg, current_voltages_eg = protocol_step_3_find_rf_for_target_drop(
@@ -136,7 +138,8 @@ rf_eg, achieved_drop_eg, current_voltages_eg = protocol_step_3_find_rf_for_targe
 )
 print(f"rf for 10 kT/e target: rf={rf_eg:.6f}, achieved_drop={achieved_drop_eg:.6f} V")
 
-#%% Step 4: fine solution at set target 
+#%% -------------------------
+# Step 4: fine solution at set target 
 # -------------------------
 print(f"--- Finding fine solution for target drop of {target_drop_eg:.3f} V ---")
 fine_sol = protocol_step_4_find_solution(
@@ -146,7 +149,8 @@ fine_sol = protocol_step_4_find_solution(
 )
 plot_density(fine_sol)
 
-#%% Intermediate step to find relevant rampfrac range for escape curve 
+#%% -------------------------
+#Intermediate step to find relevant rampfrac range for escape curve 
 # scan (between start_drop and end_drop)
 # -------------------------
 rampfrac_start, achieved_start_drop, _ = protocol_step_3_find_rf_for_target_drop(
@@ -158,7 +162,8 @@ rampfrac_end, achieved_end_drop, _ = protocol_step_3_find_rf_for_target_drop(
 print(f"scan window: start rf={rampfrac_start:.6f} (achieved {achieved_start_drop:.6f} V) "
         f"-> end rf={rampfrac_end:.6f} (achieved {achieved_end_drop:.6f} V)")
 
-#%% Step 5: escape curve scan
+#%% -------------------------
+# Step 5: escape curve scan
 # -------------------------
 ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list, vacdrop_list = protocol_step_5_escape_curve_scan(
     plasma_config, electrode_input, rampfrac_start, rampfrac_end, d_points
@@ -173,7 +178,8 @@ np.savetxt(
     delimiter=","
 )
 
-#%% Step 6/7: temperature inference (keep your exact calls)
+#%% -------------------------
+# Step 6/7: temperature inference (keep your exact calls)
 # -------------------------
 T_actual = T_current
 
