@@ -761,9 +761,9 @@ def analyse_experimental_results(filepath1, Recompute_Drops=True):
     print(f'{now}\tExecution complete')
     return temp
 
-Recompute_Drops=True #trun to False to skip voltage drop recomputation 
-filepath1=iter_all('csv','../')[8]
-measured_temp = analyse_experimental_results(filepath1, Recompute_Drops=Recompute_Drops)
+#Recompute_Drops=True #trun to False to skip voltage drop recomputation 
+#filepath1=iter_all('csv','../')[8]
+#measured_temp = analyse_experimental_results(filepath1, Recompute_Drops=Recompute_Drops)
 
 #general cross-platform code for processing all files in a directory - but commneted out for testing atm.
 '''

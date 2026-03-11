@@ -241,23 +241,20 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
 
         sc_on = voltageGuess[0,:]
 
-        
         #roi calculation 
-        
-        
-        #mx_exp = np.max(exponential_roi_init)
-        roi_left_ind = np.argmin(exponential[0,:peak_idx_init])
-        roi_left = position_map_z[0,:peak_idx_init][roi_left_ind]
-        roi_right_ind = np.argmin(exponential[0,peak_idx_init:])
-        roi_right = position_map_z[0,peak_idx_init:][roi_right_ind]
+        roi_left_ind = np.argmin(exponential[0, :peak_idx_init])
+        roi_right_ind = np.argmin(exponential[0, peak_idx_init:]) + peak_idx_init
+
+        roi_left = position_map_z[0, roi_left_ind]
+        roi_right = position_map_z[0, roi_right_ind]
         plasma_length = roi_right - roi_left #plasma length estimate from current iteration
-        
-        mx=np.max(exponential)
+
+        mask = (position_map_z >= roi_left) & (position_map_z <= roi_right)
+
+        mx = np.max(exponential[mask])
+
         nnew=np.zeros((nr,nz))
-        #nnew[exponential>mx-magic]=np.exp(exponential-mx)[exponential>mx-magic]
-        nnew=np.exp(exponential-mx)
-        nnew[position_map_z<roi_left]=0
-        nnew[position_map_z>roi_right]=0
+        nnew[mask]=np.exp(exponential[mask] - mx)
         
 
         total=np.sum(nnew*volume_elements)
@@ -464,7 +461,9 @@ def drop_for_rampfrac(plasma_config, electrode_input, rf): # finds "drop", i.e. 
     ) # a "rough" solve
     
     if sol_tmp is None:
-        return np.inf, volts, None
+        drop = 0.0
+        isConfined=False
+
     isConfined = sol_tmp[8]
     drop = sol_tmp[9]
     #vfree_tmp = sol_tmp[4]          # free_space_solution
