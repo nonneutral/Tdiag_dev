@@ -13,7 +13,7 @@ print(f'{now}\tExecution start')
 
 Llim=0.035
 Rlim=0.110
-rad2=0.0002 #plasma radius in meters
+rad2=0.0008 #plasma radius in meters
 kb=1.38064852e-23 #Boltzmann's constant in joules per kelvin
 qe=1.60217662e-19 #elementary charge in coulombs
 rw=.017 #radius of inner wall of cylindrical electrodes, in meters

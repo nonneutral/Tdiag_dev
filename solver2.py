@@ -219,13 +219,20 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
     valid_max = is_local_max & is_flat_slope
     valid_max[:10] = False
     valid_max &= (d2Vdz2 < 0)  # concave down => maximum
-
+    
     maxs = np.where(valid_max)[0]
     if maxs.size > 0:
         peak_idx_init = int(maxs[np.argmax(free_on[maxs])])
     else:
         peak_idx_init = int(np.argmax(free_on))  # fallback
   
+    if peak_idx_init == 0 or peak_idx_init == nz - 1:
+        msg = f"[find_solution:{debug_tag}] Invalid initial peak index found at boundary (peak_idx_init={peak_idx_init})."
+        isConfined = False
+        drop,roi_left_ind = 0.0, 0
+        return ngrid,position_map_z,position_map_r,free_space_solution,free_space_solution,mur2,omega_r,volume_elements,isConfined,drop,roi_left_ind
+
+
     for i in range(np.int64(1e6)):
         voltageGuess=np.copy(free_space_solution)
         voltageGuess+=get_voltage_from_charge_distr(q_e*ngrid)
@@ -240,8 +247,8 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
         #on axis potentials
 
         sc_on = voltageGuess[0,:]
-
         #roi calculation 
+
         roi_left_ind = np.argmin(exponential[0, :peak_idx_init])
         roi_right_ind = np.argmin(exponential[0, peak_idx_init:]) + peak_idx_init
 
@@ -267,6 +274,7 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
             drop = sc_on[peak_idx] - sc_on[barrier_idx]
         else:
             drop = 0.0
+            isConfined = 0
 
         isConfined = drop > 1*kb*T_e/q_e
 
@@ -342,6 +350,8 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
         plt.figure(figsize=(6,4))
         plt.imshow(ngrid,cmap='gnuplot')
         plt.title("density")
+        plt.xlabel("z grid index")
+        plt.ylabel("r grid index")
         plt.colorbar()
         plt.show()
 
@@ -498,6 +508,7 @@ def coarse_scan(plasma_config, electrode_input, scan_points=21,interp_points=100
     drops_fit = np.polyfit(grid, drops, deg=1)
     drops_interp = np.polyval(drops_fit, grid_interp)
 
+    #drops_interp = np.interp1d(grid_interp, grid, drops, fill_value="extrapolate")  # linear interpolation of drop values at the finer grid points
 
     plt.title("drop vs rampfracs coarse scan with interpolation")
     plt.plot(grid, drops,"o", label="coarse scan")
@@ -515,7 +526,7 @@ def find_rf_for_target_drop(grid_interp,drops_interp,target_drop,interp_points=1
         raise RuntimeError("coarse scan data not available; run coarse_scan() first.")
 
     rf_star = grid_interp[np.argmin(abs(drops_interp - target_drop))]
-    achieved_drop = drops_interp[np.argmin(drops_interp - target_drop)]
+    achieved_drop = drops_interp[np.argmin(abs(drops_interp - target_drop))]
 
     return np.array([rf_star, achieved_drop])
 
@@ -626,7 +637,7 @@ def escape_curve_scan(plasma_config, electrode_input, rampfrac_start, rampfrac_e
     frac_escaped_list = []
     drop_list = []
     vacdrop_list = []
-
+    history_full_solutions = []
     N_current = N_e  # total electrons at ramp start
 
     for i, rampfrac in enumerate(ramp_values):
@@ -649,7 +660,7 @@ def escape_curve_scan(plasma_config, electrode_input, rampfrac_start, rampfrac_e
             coarse_sol_divisor=100,
             InitializeWithPlasmaLength=False
         ) #now more precise
-
+        history_full_solutions.append(fine_sol)
         # Compute number of electrons that stay trapped
         N_entering = N_current
         N_erfc,onaxis_drop,vacuum_drop = compute_esc_electrons(fine_sol, T_e)
@@ -684,7 +695,7 @@ def escape_curve_scan(plasma_config, electrode_input, rampfrac_start, rampfrac_e
             print("Plasma fully escaped — stopping early.")
             break
     ramp_values = ramp_values[:len(frac_escaped_list)]
-    return ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list, vacdrop_list
+    return ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list, vacdrop_list, history_full_solutions
 
 #%%===== PLOT ESCAPE CURVE ===== #
 def plot_escape_curve(ramp_values, escaped_list, frac_escaped_list, drop_list, yscale='log'):
@@ -902,7 +913,8 @@ def protocol_step_5_escape_curve_scan(plasma_config, electrode_input, rampfrac_s
     frac_escaped_list = escape_curve_data[3]
     drop_list = escape_curve_data[4]
     vacdrop_list = escape_curve_data[5]
-    return ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list, vacdrop_list
+    history_full_solutions_list = escape_curve_data[6]
+    return ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list, vacdrop_list, history_full_solutions_list
 
 
 # ---- Step 6 ----
