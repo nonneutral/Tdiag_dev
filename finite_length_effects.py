@@ -51,7 +51,7 @@ def full_protocol(electrode_borders, T_current):
 
     #user-chosen scan window (VOLTS)
     start_drop = 10*kb*T_current/q_e
-    end_drop   = -1
+    end_drop   = -0.5
     d_points = 100
     initial_scan_points = 41
 
@@ -104,7 +104,7 @@ def full_protocol(electrode_borders, T_current):
     # -------------------------
     # Step 5: escape curve scan
     # -------------------------
-    ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list, vacdrop_list, history_full_solutions_list = protocol_step_5_escape_curve_scan(
+    ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list, vacdrop_list, history_full_solutions_list, l_p_list = protocol_step_5_escape_curve_scan(
         plasma_config, electrode_input, rampfrac_start, rampfrac_end, d_points
     )
 
@@ -165,28 +165,35 @@ def full_protocol(electrode_borders, T_current):
     plt.title("Vacuum confinement vs Drop")
     plt.legend()
     plt.show()
-    return escaped_list, vacdrop_list, drop_list
+    return escaped_list, vacdrop_list, drop_list, l_p_list
 
 
 # %%
-"""
-for d in np.arange(0.075, 0.125, 0.010):
-    print(f"Running full protocol with electrode border at {d:.3f} m")
-    print(f"Electrode borders: {[0.025, 0.050, 0.050+d, 0.075+d]}")
-    escaped_list_now, vacdrop_list_now, drop_list_now = full_protocol(electrode_borders=[0.025, 0.050, 0.050+d, 0.075+d])
-    np.savetxt(
-        f"full_protocol_scan_d{d:.3f}.csv",
-        np.array([escaped_list_now, vacdrop_list_now, drop_list_now]),
-        delimiter=","
-    )"""
 
-for T in [1600,1700,1800,1900,2000]:
-    print(f"Running full protocol with T={T} K")
-    electrode_borders = [0.025, 0.050, 0.100, 0.125]
-    print(f"Electrode borders: {electrode_borders}")
-    escaped_list_now, vacdrop_list_now, drop_list_now = full_protocol(electrode_borders=[0.025, 0.050, 0.100, 0.125], T_current=T)
+for d in np.arange(0.105, 0.106, 0.005):
+    print(f"Running full protocol with electrode length at {d:.3f} m")
+    print(f"Electrode borders: {[0.025, 0.050, 0.050+d, 0.075+d]}")
+    escaped_list_now, vacdrop_list_now, drop_list_now, l_p_list = full_protocol(electrode_borders=[0.025, 0.050, 0.050+d, 0.075+d],T_current=200)
     np.savetxt(
-        f"full_protocol_scan_T{T:.0f}K_trial2.csv",
-        np.array([escaped_list_now, vacdrop_list_now, drop_list_now]),
+        f"trial6_full_protocol_scan_d{d:.3f}.csv",
+        np.array([escaped_list_now, vacdrop_list_now, drop_list_now,l_p_list]),
         delimiter=",")
+
+    
+
+#for T in [1600,1700,1800,1900,2000]:
+#    print(f"Running full protocol with T={T} K")
+#    electrode_borders = [0.025, 0.050, 0.100, 0.125]
+#    print(f"Electrode borders: {electrode_borders}")
+#    escaped_list_now, vacdrop_list_now, drop_list_now = full_protocol(electrode_borders=[0.025, 0.050, 0.100, 0.125], T_current=T)
+#    np.savetxt(
+#        f"full_protocol_scan_T{T:.0f}K_trial2.csv",
+#        np.array([escaped_list_now, vacdrop_list_now, drop_list_now]),
+#        delimiter=",")
+# %%
+"""
+escaped_list_now, vacdrop_list_now, drop_list_now,l_p_list = full_protocol(electrode_borders=[0.025,0.050,0.100,0.125],T_current=200)
+"""
+# %%
+
 # %%
