@@ -110,6 +110,11 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
     rbound=mur2*rfact
     position_map_r=np.zeros((nr,nz))
     position_map_z=np.zeros((nr,nz))
+
+    zi=np.array([[max(0,zind-.5) for zind in range(nz)] for rind in range(nr)])
+    zo=np.array([[max(0,zind+.5) for zind in range(nz)] for rind in range(nr)])
+    muzsq = (1./3.) * (zo**3 - zi**3) / (zo - zi)
+
     for rind in range(nr):
         for zind in range(nz):
             position_map_z[rind,zind]=leftbound+(rightbound-leftbound)*(zind+.5)/(nz)
@@ -230,7 +235,7 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
         msg = f"[find_solution:{debug_tag}] Invalid initial peak index found at boundary (peak_idx_init={peak_idx_init})."
         isConfined = False
         drop,roi_left_ind = 0.0, 0
-        return ngrid,position_map_z,position_map_r,free_space_solution,free_space_solution,mur2,omega_r,volume_elements,isConfined,drop,roi_left_ind
+        return ngrid,position_map_z,position_map_r,free_space_solution,free_space_solution,mur2,omega_r,volume_elements,isConfined,drop,roi_left_ind,np.inf
 
 
     for i in range(np.int64(1e6)):
@@ -254,7 +259,7 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
 
         roi_left = position_map_z[0, roi_left_ind]
         roi_right = position_map_z[0, roi_right_ind]
-        plasma_length = roi_right - roi_left #plasma length estimate from current iteration
+  #plasma length estimate from current iteration
 
         mask = (position_map_z >= roi_left) & (position_map_z <= roi_right)
 
@@ -266,11 +271,11 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
 
         total=np.sum(nnew*volume_elements)
 
-
         peak_idx = int(np.argmax(free_on[roi_left_ind:])+roi_left_ind) 
         #print(f"peak_idx inside find_solution= {peak_idx}")
         if peak_idx > 0:
-            barrier_idx = int(np.argmin(sc_on[0:peak_idx]))  # left barrier only may need to change if plasma shifts right
+            barrier_idx = int(np.argmin(sc_on[0:peak_idx]))  
+            # left barrier may need to change if plasma shifts right
             drop = sc_on[peak_idx] - sc_on[barrier_idx]
         else:
             drop = 0.0
@@ -338,6 +343,7 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
 
     NS=ngrid*volume_elements
     rmean=np.sqrt(np.sum(mursq*NS)/(np.sum(NS)))*rbound/nr
+    plasma_length=np.sqrt(np.sum(muzsq*NS)/(np.sum(NS)))*dz
     phi=np.max(free_on)-np.max(sc_on)
 
 
@@ -360,7 +366,7 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
         plt.title("potential")
         plt.colorbar()
         plt.show()
-    return ngrid,position_map_z,position_map_r,voltageGuess,free_space_solution,rmean,omega_r,volume_elements,isConfined,drop,roi_left_ind
+    return ngrid,position_map_z,position_map_r,voltageGuess,free_space_solution,rmean,omega_r,volume_elements,isConfined,drop,roi_left_ind,plasma_length
 
 def retune_omega_iteration(omega_r, r_mean, r_target): #for step 4
     r_ratio_sq = (r_mean / r_target)**2
@@ -639,6 +645,8 @@ def escape_curve_scan(plasma_config, electrode_input, rampfrac_start, rampfrac_e
     vacdrop_list = []
     history_full_solutions = []
     N_current = N_e  # total electrons at ramp start
+    l_p_list = []
+    
 
     for i, rampfrac in enumerate(ramp_values):
         nowtime=str(datetime.now())
@@ -685,6 +693,7 @@ def escape_curve_scan(plasma_config, electrode_input, rampfrac_start, rampfrac_e
         frac_escaped_list.append(frac_escaped)
         drop_list.append(onaxis_drop)
         vacdrop_list.append(vacuum_drop)
+        l_p_list.append(fine_sol[11])
         
 
         print(f"Ramp {rampfrac:.3f}: frac escaped = {frac_escaped:.3e}, on-axis confinement ('drop') = {onaxis_drop:.3e}")
@@ -695,7 +704,7 @@ def escape_curve_scan(plasma_config, electrode_input, rampfrac_start, rampfrac_e
             print("Plasma fully escaped — stopping early.")
             break
     ramp_values = ramp_values[:len(frac_escaped_list)]
-    return ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list, vacdrop_list, history_full_solutions
+    return ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list, vacdrop_list, history_full_solutions, l_p_list
 
 #%%===== PLOT ESCAPE CURVE ===== #
 def plot_escape_curve(ramp_values, escaped_list, frac_escaped_list, drop_list, yscale='log'):
@@ -914,7 +923,8 @@ def protocol_step_5_escape_curve_scan(plasma_config, electrode_input, rampfrac_s
     drop_list = escape_curve_data[4]
     vacdrop_list = escape_curve_data[5]
     history_full_solutions_list = escape_curve_data[6]
-    return ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list, vacdrop_list, history_full_solutions_list
+    l_p_list = escape_curve_data[7]
+    return ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list, vacdrop_list, history_full_solutions_list, l_p_list
 
 
 # ---- Step 6 ----
