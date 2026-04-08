@@ -4,6 +4,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 from scipy import special
+from matplotlib.colors import LinearSegmentedColormap
+from scipy.signal import savgol_filter
+
 
 Mmax=1
 Nmax=20000
@@ -37,7 +40,7 @@ def u8Correction(filename):
     t_data = np.arange(0,len(u8_data))
 
     u8vsT_fit = np.polyfit(t_data,u8_ordered,4)
-    print(u8vsT_fit)
+    #print(u8vsT_fit)
     u8_ordered_fit = np.polyval(u8vsT_fit,t_data)
 
     #plt.plot(t_data,u8_ordered)
@@ -46,6 +49,13 @@ def u8Correction(filename):
     #plt.plot(abs(u8_ordered_fit-u8_ordered))
     #plt.show()
     u8_corrected = u8_ordered_fit * 15
+    #plt.scatter(t_data,u8_ordered*15, label="original", marker=".", color="orange", s=2)
+    #plt.scatter(t_data,u8_corrected, label="corrected", marker=".", color="blue", s=2)
+    plt.legend()
+    plt.title("u8 correction")
+    plt.xlabel("time (arb)")
+    plt.ylabel("u8 (arb)")
+    plt.show()
 
     return u8_corrected, sipm_ordered
 #%%
@@ -212,105 +222,82 @@ def u8_to_drop(unit_solutions, u8_input, initial_voltages, nz, Rlim, Llim):
 
     return VoltageDrop, peak_idx, barrier_idx
 
- 
-
-
-# Initial Input Values
-initial_voltages=np.array([0,-63,-50,-130,0]) #in volts
-final_voltages=np.array([0,0,-50,-130,0], dtype=float) #in volts
-electrode_borders=[0.025,0.050,0.100,0.125] #in meters
-Llim=0.035
-Rlim=0.115
-rw=.017 #radius of inner wall of cylindrical electrodes, in meters
-rampfrac=0.9
-current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages) * rampfrac
-
-rad2 = 0.0008
-
-electrode_input = [
-    np.array(initial_voltages),
-    np.array(final_voltages),
-    np.array(electrode_borders),
-    float(Llim),
-    float(Rlim),
-    float(rw)
-]
-
-nr=20
-nz=40
-
-
-
-
-
-filepath1=iter_all('csv','../')[8] #load data
-
-u8_corrected, sipm_ordered = u8Correction(filepath1)
-plt.scatter(u8_corrected,sipm_ordered,marker=".")
-
-
-unit_free_solns, unit_free_1ds, position_map_r, position_map_z = unitFreeSpaceSolutionsCalculation(electrode_input,nr,nz,rad2)
-
-print(unit_free_solns)
-
-for voltages in unit_free_solns:
-    plt.imshow(voltages, aspect='auto', origin='lower')
-    plt.colorbar(label="Potential")
-    plt.xlabel("z index")
-    plt.ylabel("r index")
-    plt.title("2D Potential Map")
+def convert_u8_array_to_vacdrop_array(filepath, electrode_input,nr,nz,rad2):
+    initial_voltages, final_voltages, electrode_borders, Llim, Rlim, rw = electrode_input
+    u8_corrected, sipm_ordered = u8Correction(filepath)
+    unit_solutions, unit_free_1ds, position_map_r, position_map_z = unitFreeSpaceSolutionsCalculation(electrode_input, nr=nr, nz=nz, rad2=rad2)
+    plt.scatter(u8_corrected,sipm_ordered,marker=".")
+    plt.title("sipm vs u8")
+    plt.xlabel("u8 (arb)")
+    plt.ylabel("sipm (arb)")
+    for voltages in unit_solutions:
+        plt.imshow(voltages, aspect='auto', origin='lower')
+        plt.colorbar(label="Potential")
+        plt.xlabel("z index")
+        plt.ylabel("r index")
+        plt.title("2D Potential Map")
     plt.show()
 
-for voltages in unit_free_1ds:
-    plt.plot(position_map_z[0],voltages)
-plt.show()
+    for voltages in unit_free_1ds:
+        plt.plot(position_map_z[0],voltages)
+    plt.show()
 
 
-"""
-v8s = np.arange(-63,0,1)
-drops = []
-for v8 in v8s:
-    print(f"v8: {v8}")
-    voltages = np.array([0,v8,-50,-130,0])
-    total_potential = superpose_potential(unit_free_solns, voltages)
-    
-    drop = u8_to_drop(unit_free_solns,v8,voltages,nz,Rlim,Llim)
-    drops.append(drop)
-    plt.plot(position_map_z[0],total_potential[0])
+    fig, axes = plt.subplots(len(unit_solutions), 1, figsize=(10, 8), sharex=True)
 
-plt.show()
+    for i, voltages in enumerate(unit_solutions):
+        im = axes[i].imshow(voltages, aspect='auto', origin='lower')
+        axes[i].set_ylabel("r index")
+        axes[i].set_title(f"2D Potential Map {i+1}")
+        
+        # Attach colorbar to each subplot
+        fig.colorbar(im, ax=axes[i], label="Potential")
 
-plt.plot(drops,v8s)
-plt.show()"""
+    axes[-1].set_xlabel("z index")
 
-drops_data = np.zeros_like(u8_corrected)
+    plt.tight_layout()
+    plt.show()
 
-for i, u8 in enumerate(u8_corrected):
-    voltages = np.array([0,u8,-50,-130,0])
-    drop,peak_idx,barrier_idx = u8_to_drop(unit_free_solns,u8,voltages,nz,Rlim,Llim)
-    print(f"i: {i}/{len(u8_corrected)}, u8: {u8}, drop: {drop:.10E}")
-    drops_data[i]=drop
-    if i%1000==0:
-        plt.plot(position_map_z[0],superpose_potential(unit_free_solns,voltages)[0],zorder=1)
-        if not np.isnan(drop):
-            plt.scatter(position_map_z[0,peak_idx],
-                        superpose_potential(unit_free_solns,voltages)[0,peak_idx],
-                        color="black",marker="^",zorder=2,s=2)
-            plt.scatter(position_map_z[0,barrier_idx],
-                        superpose_potential(unit_free_solns,voltages)[0,barrier_idx],
-                        color="black",marker="^",zorder=2,s=2)
+    for voltages in unit_free_1ds:
+        plt.plot(position_map_z[0],voltages)
+    plt.show()
 
-plt.show()
+    drops_data = np.zeros_like(u8_corrected)
 
-mask = ~np.isnan(drops_data)
 
-drops_data = drops_data[mask]
-u8_corrected = u8_corrected[mask]
-#%%
-plt.plot(u8_corrected,drops_data)
-plt.title("u8 to drop conversion")
-plt.xlabel("u8 (V)")
-plt.ylabel("drop (V)")
-#plt.xlim(-0.1,0.1)
+    red_blue = LinearSegmentedColormap.from_list("blue_red", ["blue", "red"])
 
-# %%
+    # Generate colors for each point
+    n_points = len(u8_corrected)
+    colors = red_blue(np.linspace(0, 1, n_points))  # first point red, last blue
+
+
+    for i, u8 in enumerate(u8_corrected):
+        voltages = np.array([0,u8,-50,-130,0])
+        drop,peak_idx,barrier_idx = u8_to_drop(unit_solutions,u8,voltages,nz,Rlim,Llim)
+        print(f"i: {i}/{len(u8_corrected)}, u8: {u8}, drop: {drop:.10E}")
+        drops_data[i]=drop
+        if i%250==0:
+            plt.plot(position_map_z[0],superpose_potential(unit_solutions,voltages)[0],zorder=1, color=colors[i])
+            if not np.isnan(drop):
+                plt.scatter(position_map_z[0,peak_idx],
+                            superpose_potential(unit_solutions,voltages)[0,peak_idx],
+                            color="black",marker="^",zorder=2,s=4)
+                plt.scatter(position_map_z[0,barrier_idx],
+                            superpose_potential(unit_solutions,voltages)[0,barrier_idx],
+                            color="black",marker="^",zorder=2,s=4)
+    plt.ylabel(f"Potential (V)")
+    plt.xlabel(f"Axial position (m)")
+    plt.show()
+
+    mask = ~np.isnan(drops_data)
+
+    drops_data = drops_data[mask]
+    u8_corrected = u8_corrected[mask]
+    sipm_corrected = sipm_ordered[mask]
+    return drops_data, u8_corrected, sipm_corrected
+
+#convert_u8_array_to_vacdrop_array(filepath1, electrode_input, nr, nz, rad2)
+#returns drops_data, u8_corrected, sipm_corrected
+
+
