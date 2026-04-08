@@ -15,19 +15,10 @@ zeros=[special.jn_zeros(m,Nmax) for m in range(Mmax)]
 # Physical Constants
 e0=8.854187817e-12 #farads per meter
 
-
-def iter_all(substring, path):
-    return list(
-        os.path.join(root, entry)
-        for root, dirs, files in os.walk(path)
-        for entry in dirs + files
-        if substring in entry
-    )
-def u8Correction(filename):
-    df = pd.read_csv(filename, header=None)
-
-    sipm_data = np.array(df[0].values)  #sipm (~escape rate)
-    u8_data = np.array(df[1].values)    #u8 excitations
+    
+def u8Correction(u8,sipm):
+    sipm_data = np.array(sipm)  #sipm (~escape rate)
+    u8_data = np.array(u8)    #u8 excitations
     
 
     print(np.shape(sipm_data))
@@ -222,9 +213,9 @@ def u8_to_drop(unit_solutions, u8_input, initial_voltages, nz, Rlim, Llim):
 
     return VoltageDrop, peak_idx, barrier_idx
 
-def convert_u8_array_to_vacdrop_array(filepath, electrode_input,nr,nz,rad2):
+def convert_u8_array_to_vacdrop_array(u8,sipm, electrode_input,nr,nz,rad2):
     initial_voltages, final_voltages, electrode_borders, Llim, Rlim, rw = electrode_input
-    u8_corrected, sipm_ordered = u8Correction(filepath)
+    u8_corrected, sipm_ordered = u8Correction(u8,sipm)
     unit_solutions, unit_free_1ds, position_map_r, position_map_z = unitFreeSpaceSolutionsCalculation(electrode_input, nr=nr, nz=nz, rad2=rad2)
     plt.scatter(u8_corrected,sipm_ordered,marker=".")
     plt.title("sipm vs u8")
