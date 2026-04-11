@@ -2,7 +2,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from solver2 import *
-from step_1 import analyse_experimental_results, iter_all
+from step_1 import analyse_experimental_results, iter_all, extract_measured_temp
+from scipy.interpolate import interp1d
 
 # Input 
 N_e=3e5 #number of electrons
@@ -30,20 +31,6 @@ rampfrac=0.9
 current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages) * rampfrac
 
 
-
-# Experimental results analysis (uncomment to run)
-#%%
-Recompute_Drops=True #trun to False to skip voltage drop recomputation 
-filepath1=iter_all('csv','../')[8] #load data
-measured_temp = analyse_experimental_results(filepath1, Recompute_Drops=Recompute_Drops)
-
-print(f"Extracted temperature: {measured_temp} K")
-T_current = measured_temp
-
-# %% full scan for T_diag vs T_actual (step 4-8), now run as explicit pipeline steps
-print(f"T = {T_current}")
-
-plasma_config = [float(N_e), float(T_current), float(omega_r), float(rad2), float(B2)]
 electrode_input = [
     np.array(initial_voltages),
     np.array(final_voltages),
@@ -53,10 +40,25 @@ electrode_input = [
     float(rw)
 ]
 
+# Experimental results analysis (uncomment to run)
+#%%
+Recompute_Drops=True #trun to False to skip voltage drop recomputation 
+filepath1=iter_all('csv','../')[20] #load data
+measured_temp, err, xs, ys = analyse_experimental_results(filepath1, Recompute_Drops=Recompute_Drops)
+
+print(f"Extracted temperature: {measured_temp} K +-{err}")
+T_current = measured_temp
+T_current = 100
+# %% full scan for T_diag vs T_actual (step 4-8), now run as explicit pipeline steps
+print(f"T = {T_current}")
+
+plasma_config = [float(N_e), float(T_current), float(omega_r), float(rad2), float(B2)]
+
+
 #user-chosen scan window (VOLTS)
-start_drop = 0.1
+start_drop = 0.5
 end_drop   = -0.5
-d_points = 50
+d_points = 100
 initial_scan_points = 41
 
 #%% Step 1: retune omega_r
@@ -108,7 +110,7 @@ print(f"scan window: start rf={rampfrac_start:.6f} (achieved {achieved_start_dro
 #%% -------------------------
 # Step 5: escape curve scan
 # -------------------------
-ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list, vacdrop_list = protocol_step_5_escape_curve_scan(
+ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list, vacdrop_list, history_full_solutions_list, l_p_list = protocol_step_5_escape_curve_scan(
     plasma_config, electrode_input, rampfrac_start, rampfrac_end, d_points
 )
 
@@ -133,6 +135,7 @@ Tvac, errvac = linear_model_T_diag(
     saveplotttitle="Escape_plot_vac",
     crop_factor_input=0.591
 )
+print(rf"Tvac: {Tvac} $\pm$ {errvac}")
 print(f"Actual Temperature: {T_actual:.2f} K")
 print(f"Percentage Error: {abs(Tvac - T_actual) / T_actual * 100:.2f}%")
 
@@ -143,8 +146,70 @@ Tdrop, errdrop = linear_model_T_diag(
     saveplotttitle="Escape_plot_drop",
     crop_factor_input=0.591
 )
+print(rf"Tdrop: {Tdrop} $\pm$ {errdrop}")
 print(f"Actual Temperature: {T_actual:.2f} K")
 print(f"Percentage Error: {abs(Tdrop - T_actual) / T_actual * 100:.2f}%")
 
 # %%
 
+ramp_values, escaped_list, frac_escaped_list, drop_list, vacdrop_list = np.loadtxt("T100_N3.00e+05_omega_r6.77e+04_rad0.0008_B2.0.csv",delimiter = ",")
+
+y_plot = np.array(escaped_list)
+x_vac = np.array(vacdrop_list)
+x_drop = np.array(drop_list)
+
+plt.figure(figsize=(6,4))
+plt.scatter(x_vac, np.log(y_plot))
+#plt.scatter(x_vac, np.log(y_plot))
+plt.xlabel("vacuum drop (V)")
+plt.ylabel("number of escaped electrons")
+plt.title("Escaped electrons vs Vacuum Drop")
+#plt.yscale('log')
+plt.gca().invert_xaxis()
+plt.show()
+
+
+x_data = np.abs(xs)
+f = interp1d(x_vac, x_drop, kind='linear', fill_value="extrapolate")
+interp_step_1_scc_drop = f(x_data)
+
+
+plt.plot(x_vac, x_drop, label="solver", marker='o', linestyle='-', color='orange', markersize=5, linewidth=1)
+plt.plot(x_data, interp_step_1_scc_drop, label="data_points", linestyle='-', color='blue', markersize=5, linewidth=1)
+plt.xlabel("vacuum confinement (V)")
+plt.ylabel("drop (V)")
+plt.title("Vacuum confinement vs Drop")
+plt.legend()
+plt.show()
+
+plt.plot(x_vac, x_drop, label="vacuum drop vs drop", marker='o', linestyle='-', color='blue', markersize=5, linewidth=1)
+plt.plot(x_data, interp_step_1_scc_drop, label="x-axis for data", linestyle='-', color='red', markersize=5, linewidth=3)
+plt.xlabel("vacuum confinement (V)")
+plt.ylabel("drop (V)")
+plt.title("Vacuum confinement vs Drop")
+plt.grid(True, linestyle="--", alpha=0.7)
+plt.legend()
+plt.show()
+
+plt.plot(x_data, ys, label="data", marker='o', linestyle='-', color='orange', markersize=5, linewidth=1)
+plt.xlabel("vacuum confinement (V)")
+plt.ylabel("number of escaped electrons")
+plt.gca().invert_xaxis()
+plt.title("Escaped electrons vs Vacuum Confinement")
+plt.legend()
+plt.show()
+
+
+plt.plot(interp_step_1_scc_drop, ys, label="SCC", marker='o', linestyle='-', color='orange', markersize=5, linewidth=1)
+plt.xlabel("drop (V)")
+plt.ylabel("number of escaped electrons")
+plt.grid()
+plt.gca().invert_xaxis()
+plt.title("Escaped electrons vs Drop (SCC)")
+plt.legend()
+plt.show()
+
+T_new, err_new, xs_new, ys_new = extract_measured_temp(interp_step_1_scc_drop,-np.exp(ys))
+print(f"Extracted temperature: {T_new} K +- {err_new}")
+print(f"First Estimate Temperature: {measured_temp:.2f} K")
+# %%

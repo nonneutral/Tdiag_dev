@@ -15,11 +15,24 @@ zeros=[special.jn_zeros(m,Nmax) for m in range(Mmax)]
 # Physical Constants
 e0=8.854187817e-12 #farads per meter
 
-    
-def u8Correction(u8,sipm):
-    sipm_data = np.array(sipm)  #sipm (~escape rate)
-    u8_data = np.array(u8)    #u8 excitations
-    
+
+def iter_all(substring, path):
+    return list(
+        os.path.join(root, entry)
+        for root, dirs, files in os.walk(path)
+        for entry in dirs + files
+        if substring in entry
+    )
+def u8Correction(filename):
+
+    try:
+        df = pd.read_csv(filename, header=None)
+    except Exception as e:
+        print(f"Error reading {filename}: {e}")
+        return
+
+    sipm_data = df[0].values  #sipm (~escape rate)
+    u8_data = df[1].values    #u8 excitations
 
     print(np.shape(sipm_data))
     print(np.shape(u8_data))
@@ -213,9 +226,9 @@ def u8_to_drop(unit_solutions, u8_input, initial_voltages, nz, Rlim, Llim):
 
     return VoltageDrop, peak_idx, barrier_idx
 
-def convert_u8_array_to_vacdrop_array(u8,sipm, electrode_input,nr,nz,rad2):
+def convert_u8_array_to_vacdrop_array(filepath, electrode_input,nr,nz,rad2):
     initial_voltages, final_voltages, electrode_borders, Llim, Rlim, rw = electrode_input
-    u8_corrected, sipm_ordered = u8Correction(u8,sipm)
+    u8_corrected, sipm_ordered = u8Correction(filepath)
     unit_solutions, unit_free_1ds, position_map_r, position_map_z = unitFreeSpaceSolutionsCalculation(electrode_input, nr=nr, nz=nz, rad2=rad2)
     plt.scatter(u8_corrected,sipm_ordered,marker=".")
     plt.title("sipm vs u8")
@@ -286,9 +299,45 @@ def convert_u8_array_to_vacdrop_array(u8,sipm, electrode_input,nr,nz,rad2):
     drops_data = drops_data[mask]
     u8_corrected = u8_corrected[mask]
     sipm_corrected = sipm_ordered[mask]
+
+    plt.scatter(u8_corrected, sipm_corrected, marker=".", color="green")
+    plt.title("u8 vs sipm")
+    plt.xlabel("u8 (arb)")
+    plt.ylabel("Vacuum drop (V)")
+    plt.show()
+
+    plt.scatter(drops_data, np.log10(-sipm_corrected), marker=".", color="purple")
+    plt.title("Vacuum drop vs sipm")
+    plt.xlabel("Vacuum drop (V)")
+    plt.ylabel("sipm (arb)")
+    plt.xlim(-0.5, 0.5)
+    plt.gca().invert_xaxis()
+    plt.show()
     return drops_data, u8_corrected, sipm_corrected
 
 #convert_u8_array_to_vacdrop_array(filepath1, electrode_input, nr, nz, rad2)
 #returns drops_data, u8_corrected, sipm_corrected
 
+# Initial Input Values
+initial_voltages=np.array([0,-63,-50,-130,0]) #in volts
+final_voltages=np.array([0,0,-50,-130,0], dtype=float) #in volts
+electrode_borders=[0.025,0.050,0.100,0.125] #in meters
+Llim=0.035
+Rlim=0.115
+rw=.017 #radius of inner wall of cylindrical electrodes, in meters
+rampfrac=0.9
+current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages) * rampfrac
 
+electrode_input = [
+    np.array(initial_voltages),
+    np.array(final_voltages),
+    np.array(electrode_borders),
+    float(Llim),
+    float(Rlim),
+    float(rw)
+]
+
+filepath1=iter_all('csv','../')[20] #load data
+
+
+drops_data, u8_corrected, sipm_corrected = convert_u8_array_to_vacdrop_array(filepath1, electrode_input, nr=30, nz=60, rad2=0.0008)

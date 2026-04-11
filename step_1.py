@@ -7,6 +7,7 @@ from scipy.signal import savgol_filter
 #from find_solution import getFiniteSolution
 from solver2 import getFiniteSolution
 from datetime import datetime
+from drops import convert_u8_array_to_vacdrop_array
 
 now=str(datetime.now())
 print(f'{now}\tExecution start')
@@ -140,7 +141,7 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
 
         plt.title(f"{title} | Drop = {VoltageDrop:.4g} V")
         plt.xlabel("z (m)")
-        plt.ylabel("V (arb)")
+        plt.ylabel("V (V)")
         plt.grid(True, ls="--", alpha=0.5)
         plt.legend()
         plt.tight_layout()
@@ -164,7 +165,7 @@ def getElectrodeVoltageDrop(electrodeConfig, rpoints, zpoints, left, right, mur2
         plt.title(f"{title} | free_space_solution (r vs z index)")
         plt.xlabel("z index")
         plt.ylabel("r index")
-        plt.colorbar(label="V (arb)")
+        plt.colorbar(label="V (V)")
         plt.tight_layout()
         plt.show()
 
@@ -260,7 +261,7 @@ def auto_roi_from_dip(x, y, smooth_window=71, polyorder=3, baseline_quantile=0.9
     i_left = max(0, i_left - prepad)
 
     mask = np.zeros(n, dtype=bool)
-    mask[i_left:i0+101] = True     
+    mask[i_left:i0] = True     
 
     return mask, x[i_left], x[i0], (i_left, i0), baseline, sigma, thr_high, thr_low
 
@@ -290,6 +291,9 @@ def fit_and_convert_u8(filename):
     
     mask, xL, xR, (iL, iR), baseline, sig, thr_high, thr_low = auto_roi_from_dip(u8_data, sipm_data) #Auto-detect ROI around dip
 
+
+    print(iL)
+    print(iR)
     t = np.arange(len(u8_data))
     
     plt.figure(figsize=(10,6))
@@ -302,6 +306,17 @@ def fit_and_convert_u8(filename):
     plt.grid(True, linestyle="--", alpha=0.7)
     plt.tight_layout()
     plt.show()
+
+    if iL is not None:
+        plt.axvspan(15*u8_data[iL], 15*u8_data[iR], alpha=0.2) #labels the ROI
+    plt.plot(15*u8_data, sipm_data, '.', markersize=2, alpha=0.6)
+    plt.title("SiPM vs u8 index")
+    plt.xlabel("time index")
+    plt.ylabel("SiPM")
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.tight_layout()
+    plt.show()
+    
     
     plt.figure(figsize=(10,4))
     if iL is not None:
@@ -345,7 +360,7 @@ def fit_and_convert_u8(filename):
     plt.tight_layout()
     plt.show()
     #print(u8_fit)
-    converted_voltages = u8_fit * 15 #convert to volatges
+    converted_voltages = u8_roi_for_fit * 15 #convert to volatges
     return converted_voltages, u8_roi_for_fit, t_roi_for_fit, sipm_roi_for_fit #pre-lim return for test run
     
     #Final step for this function: substitute the volatges in as one of the electrodeConfig arg along with borders as the other.
@@ -377,9 +392,10 @@ def getTotalVoltageDropProfile(converted_voltages, debug_steps=(0, -1)):
             debug_title=f"Step {i}/{n_steps-1} | v={v:.3g}"
         )
         drops.append(drop)
-        #print(f"Iteration {i}/{n_steps-1} : v={v:.3g}, drop={drop}")
+        print(f"Iteration {i}/{n_steps-1} : v={v:.3g}, drop={drop}")
     
-    plt.plot(v_sweep, drops, 'o-')
+    plt.plot(v_sweep, drops, '-')
+    plt.vlines([v_start,v_end], np.min(drops),np.max(drops))
     plt.xlabel("Voltage Sweep")
     plt.ylabel("Voltage Drop")
     plt.grid(True, linestyle="--", alpha=0.7)
@@ -488,12 +504,12 @@ def auto_flank_from_slope(xs, ys,
         if peak < tl:
             return None, None, th, tl
 
-        gap_max = 8  #allow up to 8 consecutive points below threshold while expanding
+        gap_max = 4  #allow up to 8 consecutive points below threshold while expanding
 
         iL = i0
         gap = 0
         while iL > 0:
-            if dy_use[iL-1] > th:
+            if dy_use_s[iL-1] > th:
                 gap = 0
                 iL -= 1
             else:
@@ -505,7 +521,7 @@ def auto_flank_from_slope(xs, ys,
         iR = i0
         gap = 0
         while iR < n-1:
-            if dy_use[iR+1] > th:
+            if dy_use_s[iR+1] > th:
                 gap = 0
                 iR += 1
             else:
@@ -525,42 +541,22 @@ def auto_flank_from_slope(xs, ys,
 
     iL, iR, thr_high, thr_low = attempt(sigma_low, sigma_high, min_pts)
 
-    fig, axes = plt.subplots(5, 1, figsize=(10, 8), sharex=True)
+    fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
     axes[0].plot(xs, ys, label="raw")
     axes[0].plot(xs, ys_s, label="smoothed", markersize=3)
     axes[0].set_ylabel("y")
     axes[0].legend()
     axes[0].grid(True)
 
-    axes[1].plot(xs, dy_raw, label="raw slope")
-    axes[1].set_ylabel("dy/dx")
+    axes[1].plot(xs, dy_use, label="slope")
+    axes[1].plot(xs, dy_use_s, label="slope (smoothed)")
+    axes[1].set_ylabel("|dy/dx|")
+    axes[1].axhline(thr_low, ls="--", label=f"thr_low={thr_low:.3g}", color="r")
+    axes[1].axhline(thr_high, ls="--", label=f"thr_high={thr_high:.3g}", color="r")
+    axes[1].axvline(xs[i0], ls=":", label=f"peak at x={xs[i0]:.3g}", color="m")
+    axes[1].axvspan(xs[iL], xs[iR], alpha=0.2, color="y", label=f"flank region [{xs[iL]:.3g}, {xs[iR]:.3g}]")
     axes[1].legend()
     axes[1].grid(True)
-    
-    axes[2].plot(xs, dy_use, label="slope")
-    axes[2].plot(xs, dy_use_s, label="slope (smoothed)")
-    axes[2].set_ylabel("|dy/dx|")
-    axes[2].axhline(thr_low, ls="--", label=f"thr_low={thr_low:.3g}", color="r")
-    axes[2].axhline(thr_high, ls="--", label=f"thr_high={thr_high:.3g}", color="r")
-    axes[2].axvline(xs[i0], ls=":", label=f"peak at x={xs[i0]:.3g}", color="m")
-    axes[2].axvspan(xs[iL], xs[iR], alpha=0.2, color="y", label=f"flank region [{xs[iL]:.3g}, {xs[iR]:.3g}]")
-    axes[2].legend()
-    axes[2].grid(True)
-
-    axes[3].plot(xs, dy_use_err, label="slope error estimate")
-    axes[3].plot(xs, dy_use_err_s, label="slope error estimate (smoothed)")
-    axes[3].set_xlabel("x")
-    axes[3].set_ylabel("slope error")
-    axes[3].legend()
-    axes[3].grid(True)
-
-    axes[4].plot(xs, curvature_use, label="curvature estimate")
-    axes[4].plot(xs, curvature_use_s, label="curvature estimate (smoothed)")
-    axes[4].set_xlabel("x")
-    axes[4].set_ylabel("curvature")
-    axes[4].set_yscale("log")
-    axes[4].legend()
-    axes[4].grid(True)
 
     plt.tight_layout()
     plt.show()
@@ -608,6 +604,7 @@ def extract_measured_temp(drops, sipm_roi_for_fit):
     order = np.argsort(x)
     xs = x[order]
     ys = y[order]
+    rate = rate[order]
 
     
     finite = np.isfinite(xs) & np.isfinite(ys)
@@ -711,7 +708,9 @@ def extract_measured_temp(drops, sipm_roi_for_fit):
         
     #center x for nicer intercept / numerics
     x0 = np.mean(x_fit)
-    m, c = np.polyfit(x_fit - x0, y_fit, 1)
+    fit, cov = np.polyfit(x_fit - x0, y_fit, 1,cov=True)
+    m, c = fit
+    err = np.sqrt(cov[0,0])
     b = c - m*x0
     Measured_Temp = qe * 1.05 / (kb * abs(m))
 
@@ -720,46 +719,76 @@ def extract_measured_temp(drops, sipm_roi_for_fit):
     plt.gcf().patch.set_alpha(0)
 
     # Deep blue full data
-    plt.plot(xs, ys, 'o-', 
+    plt.scatter(xs, ys/np.log(10), marker='o',
             color="#05696B",     #1418E2   
-            markersize=3,
+            s=3,
             alpha=0.7,
             label="log(-SiPM)")
 
     # Purple fit region
-    plt.plot(x_fit, y_fit, 'o', 
+    plt.plot(x_fit, y_fit/np.log(10), 'o', 
             color="#ff1493",   #F3CC0B   #800080
             markersize=4,
             label="fit region")
 
     # Pink fit line
     xline = np.linspace(x_fit.min(), x_fit.max(), 200)
-    plt.plot(xline, m*xline + b, '-', 
+    plt.plot(xline, (m*xline + b)/np.log(10), '-', 
             color="#1418E2",        
             linewidth=2,
             label=f"fit: y={m:.3g}x+{b:.3g}")
 
-    plt.xlabel("Arb. time units", size=18)
+    plt.xlabel("Confinement (V)", size=18)
     plt.ylabel("log(|SiPM|)", size=18)
     plt.grid(True, linestyle="--")
     plt.legend()
     plt.tight_layout()
     plt.show()
     
-    return Measured_Temp
+    return Measured_Temp, err, xs, ys
 
 #%% - TEST RUN
 
 def analyse_experimental_results(filepath1, Recompute_Drops=True):
-    converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8(filepath1)
+    #converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8(filepath1)
+    initial_voltages=np.array([0,-63,-50,-130,0]) #in volts
+    final_voltages=np.array([0,0,-50,-130,0], dtype=float) #in volts
+    electrode_borders=[0.025,0.050,0.100,0.125] #in meters
+    Llim=0.035
+    Rlim=0.115
+    rw=.017 #radius of inner wall of cylindrical electrodes, in meters
+    rampfrac=0.9
+    current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages) * rampfrac
+
+
+    electrode_input = [
+        np.array(initial_voltages),
+        np.array(final_voltages),
+        np.array(electrode_borders),
+        float(Llim),
+        float(Rlim),
+        float(rw)
+    ]
     if Recompute_Drops: 
+        converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8(filepath1)
         drops = getTotalVoltageDropProfile(converted_voltages, debug_steps=(0, len(converted_voltages)//2, -1))   
-    temp = extract_measured_temp(drops, sipm_roi_for_fit)
+        
+        #drops, u8, sipm_roi_for_fit = convert_u8_array_to_vacdrop_array(filepath1,electrode_input,nr=20,nz=40,rad2=0.0008) #use the direct conversion for speed since we know the fit is good from testing - skip the full drop recomputation which is slow
+        #drops = np.asarray(drops[10000:])
+        #u8 = np.asarray(u8[10000:])
+        #sipm_roi_for_fit = np.asarray(sipm_roi_for_fit[10000:])
+        print(drops)
+        plt.plot(drops,sipm_roi_for_fit, 'o-')
+        plt.xlabel("Voltage Drop")
+        plt.ylabel("SiPM (ROI)")
+        plt.title("SiPM vs Voltage Drop (ROI)")
+        plt.grid(True, linestyle="--", alpha=0.7)
+    temp,err, xs, ys = extract_measured_temp(drops, sipm_roi_for_fit)
     print(f"Extracted temperature: {temp} K")
 
     now=str(datetime.now())
     print(f'{now}\tExecution complete')
-    return temp
+    return temp, err, xs, ys
 
 #Recompute_Drops=True #trun to False to skip voltage drop recomputation 
 #filepath1=iter_all('csv','../')[8]
