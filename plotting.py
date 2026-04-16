@@ -275,3 +275,41 @@ plt.show()
 plt.scatter(d_range, l_p_s)
 
 print(crop_factor_list)"""
+
+#%%
+
+import pandas as pd
+
+
+
+def iter_all(substring, path):
+    return list(
+        os.path.join(root, entry)
+        for root, dirs, files in os.walk(path)
+        for entry in dirs + files
+        if substring in entry
+    )
+
+
+Recompute_Drops=True #trun to False to skip voltage drop recomputation 
+filepath1=iter_all('csv','../')[20] #load data
+df = pd.read_csv(filepath1, header=None)
+
+sipm_data = np.abs(df[0].values)  #sipm (~escape rate)
+u8_data = df[1].values*15   #u8 excitations
+
+
+u8_solver, sipm_solver,_,_,_ = np.loadtxt("useful_data\T300_N3.00e+05_omega_r9.02e+04_rad0.0008_B2.0.csv",delimiter=",")
+
+u8_solver = -63 * (1-u8_solver)
+
+plt.scatter(u8_data,np.log10(1000*sipm_data), color="blue", label="data", marker=".", linestyle="-", s=5, linewidth=1)
+plt.plot(u8_solver,np.log10(sipm_solver), color="orange", label="solver", marker="o", linestyle="-", markersize=5, linewidth=1)
+plt.xlabel("u8 excitations (V)")
+plt.ylabel("escaped electrons (normalized)")
+plt.title("Escaped electrons vs u8 excitations")
+plt.xlim(-56,-52)
+plt.legend(["data", "solver"])
+plt.show()
+
+# %%
