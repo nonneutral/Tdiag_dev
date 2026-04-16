@@ -44,11 +44,12 @@ electrode_input = [
 #%%
 Recompute_Drops=True #trun to False to skip voltage drop recomputation 
 filepath1=iter_all('csv','../')[20] #load data
-measured_temp, err, xs, ys = analyse_experimental_results(filepath1, Recompute_Drops=Recompute_Drops)
+offset=500 #offset to trim data for better fit - adjust as needed based on data length and quality
+measured_temp, err, xs, ys = analyse_experimental_results(filepath1, Recompute_Drops=Recompute_Drops, offset=offset)
 
 print(f"Extracted temperature: {measured_temp} K +-{err}")
 T_current = measured_temp
-T_current = 100
+#T_current = 100
 # %% full scan for T_diag vs T_actual (step 4-8), now run as explicit pipeline steps
 print(f"T = {T_current}")
 
@@ -123,6 +124,7 @@ np.savetxt(
     delimiter=","
 )
 
+u8_solver = ramp_values*-63
 #%% -------------------------
 # Step 6/7: temperature inference (keep your exact calls)
 # -------------------------
@@ -150,16 +152,16 @@ print(rf"Tdrop: {Tdrop} $\pm$ {errdrop}")
 print(f"Actual Temperature: {T_actual:.2f} K")
 print(f"Percentage Error: {abs(Tdrop - T_actual) / T_actual * 100:.2f}%")
 
-# %%
+#%%
 
-ramp_values, escaped_list, frac_escaped_list, drop_list, vacdrop_list = np.loadtxt("T100_N3.00e+05_omega_r6.77e+04_rad0.0008_B2.0.csv",delimiter = ",")
+ramp_values, escaped_list, frac_escaped_list, drop_list, vacdrop_list = np.loadtxt("useful_data/T300_N3.00e+05_omega_r9.02e+04_rad0.0008_B2.0.csv",delimiter = ",")
 
 y_plot = np.array(escaped_list)
 x_vac = np.array(vacdrop_list)
 x_drop = np.array(drop_list)
 
 plt.figure(figsize=(6,4))
-plt.scatter(x_vac, np.log(y_plot))
+plt.scatter(x_vac, np.log10(y_plot))
 #plt.scatter(x_vac, np.log(y_plot))
 plt.xlabel("vacuum drop (V)")
 plt.ylabel("number of escaped electrons")
@@ -192,6 +194,7 @@ plt.legend()
 plt.show()
 
 plt.plot(x_data, ys, label="data", marker='o', linestyle='-', color='orange', markersize=5, linewidth=1)
+plt.plot(vacdrop_list, np.log(escaped_list), label="vacuum drop", marker='o', linestyle='-', color='blue', markersize=5, linewidth=1)
 plt.xlabel("vacuum confinement (V)")
 plt.ylabel("number of escaped electrons")
 plt.gca().invert_xaxis()

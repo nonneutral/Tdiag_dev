@@ -266,7 +266,7 @@ def auto_roi_from_dip(x, y, smooth_window=71, polyorder=3, baseline_quantile=0.9
     return mask, x[i_left], x[i0], (i_left, i0), baseline, sigma, thr_high, thr_low
 
 #%%
-def fit_and_convert_u8(filename):
+def fit_and_convert_u8(filename,offset):
     '''
     Fit function to fit for converted u8 excitation data and get a functional
     representation of voltages. Need to return this fit form to use as electrodeConfig 
@@ -284,6 +284,10 @@ def fit_and_convert_u8(filename):
     sipm_data = df[0].values  #sipm (~escape rate)
     u8_data = df[1].values    #u8 excitations
     
+    sipm_data = sipm_data[offset:len(sipm_data)]
+    u8_data = u8_data[0:-offset]
+    
+
     print("FILE:", filename)
     print("df shape:", df.shape)
     print(df.head())
@@ -749,7 +753,7 @@ def extract_measured_temp(drops, sipm_roi_for_fit):
 
 #%% - TEST RUN
 
-def analyse_experimental_results(filepath1, Recompute_Drops=True):
+def analyse_experimental_results(filepath1, Recompute_Drops=True, offset=1000):
     #converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8(filepath1)
     initial_voltages=np.array([0,-63,-50,-130,0]) #in volts
     final_voltages=np.array([0,0,-50,-130,0], dtype=float) #in volts
@@ -770,7 +774,7 @@ def analyse_experimental_results(filepath1, Recompute_Drops=True):
         float(rw)
     ]
     if Recompute_Drops: 
-        converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8(filepath1)
+        converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8(filepath1,offset)
         drops = getTotalVoltageDropProfile(converted_voltages, debug_steps=(0, len(converted_voltages)//2, -1))   
         
         #drops, u8, sipm_roi_for_fit = convert_u8_array_to_vacdrop_array(filepath1,electrode_input,nr=20,nz=40,rad2=0.0008) #use the direct conversion for speed since we know the fit is good from testing - skip the full drop recomputation which is slow
