@@ -4,12 +4,7 @@ import re
 import numpy as np
 import matplotlib.pyplot as plt
 import lin_fit_optimiser as lfo
-
-def quadratic(x):
-    return x**2
-
-def quadinv(x):
-    return np.sqrt(x)
+import pandas as pd
 
 d50mm = np.loadtxt("./useful_data/full_protocol_scan_d0.050.csv", delimiter=",")
 d55mm = np.loadtxt("./useful_data/full_protocol_scan_d0.055.csv", delimiter=",")
@@ -295,62 +290,146 @@ def iter_all(substring, path):
         for entry in dirs + files
         if substring in entry
     )
+def u8Correction(filename):
 
+    try:
+        df = pd.read_csv(filename, header=None)
+    except Exception as e:
+        print(f"Error reading {filename}: {e}")
+        return
+    print(f"file name: {filename}")
+    sipm_data = df[0].values  #sipm (~escape rate)
+    u8_data = df[1].values    #u8 excitations
+    
 
-solver_vs_experimental_fit = []
-
-
-for x in np.arange(600,900,10):
-    filepath1=iter_all('csv','../')[20] #load data
-    df = pd.read_csv(filepath1, header=None)
-
-    sipm_data = np.abs(df[0].values)  #sipm (~escape rate)
-    u8_data = df[1].values*15   #u8 excitations
-
-
-    offset=x #offset to trim data for better fit - adjust as needed based on data length and quality
-
-    sipm_data = sipm_data[offset:len(sipm_data)]
-    u8_data = u8_data[0:-offset]
-
+    sipm_data = sipm_data
+    u8_data = u8_data
+    
+    print(np.shape(sipm_data))
+    print(np.shape(u8_data))
 
     order = np.argsort(u8_data)
-    u8_data = u8_data[order]
-    sipm_data = sipm_data[order]
 
+    sipm_ordered = sipm_data[order]
+    u8_ordered = u8_data[order]
+    t_data = np.arange(0,len(u8_data))
 
+    u8vsT_fit = np.polyfit(t_data,u8_ordered,4)
+    #print(u8vsT_fit)
+    u8_ordered_fit = np.polyval(u8vsT_fit,t_data)
+    u8_corrected = u8_ordered_fit * 15
 
+    #plt.plot(t_data,u8_ordered)
+    #plt.plot(t_data,u8_ordered_fit, color="g",ms=0.4)
+    #plt.plot(abs(u8_ordered_fit-u8_ordered))
+    #plt.show()
+    #plt.scatter(t_data,u8_ordered*15, label="original", marker=".", color="orange", s=2)
+    #plt.scatter(t_data,u8_corrected, label="corrected", marker=".", color="blue", s=2)
+    #plt.legend()
+    #plt.title("u8 correction")
+    #plt.xlabel("time (arb)")
+    #plt.ylabel("u8 (arb)")
+    #plt.show()
 
-    u8_solver, sipm_solver,_,_,_ = np.loadtxt("useful_data\T300_N3.00e+05_omega_r9.02e+04_rad0.0008_B2.0.csv",delimiter=",")
-    u8_solver = -63 * (1-u8_solver)
+    return u8_corrected, sipm_ordered
+#%%
 
+def find_offset(file_number):
+    solver_vs_experimental_fit = []
 
+    filepath1=iter_all('csv','../')[file_number] #load data
+    #df = pd.read_csv(filepath1, header=None)
 
-    mask = u8_data > u8_solver[0]  # Only consider data points where u8_data is greater than the first point of u8_solver
-    mask = mask & (u8_data < u8_solver[-1])  # Also ensure u8_data is less than the last point of u8_solver
+    #sipm_data = np.abs(df[0].values)  #sipm (~escape rate)
+    #u8_data = df[1].values*15   #u8 excitations
 
-
-    #u8_data = u8_data[mask]
-    #sipm_data = sipm_data[mask]
-
-    f = interp1d(u8_solver, sipm_solver, kind='linear', fill_value="extrapolate")
-    sipm_interp = f(u8_data)
-
-
-
-    diff = np.abs(np.log10(sipm_interp)-np.log10(1000*sipm_data))/sipm_data
-
-    solver_vs_experimental_fit.append(sum(diff))
-    plt.plot(u8_solver, np.log10(sipm_solver), marker="o", color="blue", label=f"offset = {offset}")
-    plt.plot(u8_data, np.log10(1000*sipm_data))
-    plt.legend()
-    #plt.plot(u8_data, diff, marker="o", linestyle="-", color="blue", label=f"offset = {offset}")
+    u8_data_init, sipm_data_init = u8Correction(filepath1)
+    sipm_data_init = np.abs(sipm_data_init)
+    plt.scatter(u8_data_init, (sipm_data_init), label="original", marker="o", color="red", s=4)
     plt.xlabel("u8 (V)")
     plt.ylabel("sipm (a.u.)")
-    plt.title("Solver vs Experimental Data Fit")
+    plt.title("Original u8 vs sipm")
+    plt.legend()
     plt.show()
-#plt.plot(np.arange(150,1000,1), solver_vs_experimental_fit, marker="o", linestyle="-", color="blue")
-#plt.title("Fit of solver to experimental data vs offset", fontsize=20)
-#plt.yscale("log")
+    x_range = np.arange(150,1000,50)
+    for x in x_range:
+
+        offset=x #offset to trim data for better fit - adjust as needed based on data length and quality
+        
+        u8_data = u8_data_init
+        sipm_data = sipm_data_init
+        sipm_data = sipm_data[offset:len(sipm_data)]
+        u8_data = u8_data[0:-offset]
+
+
+        order = np.argsort(u8_data)
+        u8_data = u8_data[order]
+        sipm_data = sipm_data[order]
+
+        u8_solver, sipm_solver,_,_,_ = np.loadtxt("useful_data/T200_N3.00e+05_omega_r8.02e+04_rad0.0008_B2.0.csv",delimiter=",")
+        u8_solver = -63 * (1-u8_solver)
+        sipm_solver = sipm_solver+1
+
+        u8_solver = u8_solver[len(u8_solver)//2:]
+        sipm_solver = sipm_solver[len(sipm_solver)//2:]    
+
+
+        mask = u8_data > u8_solver[0]  # Only consider data points where u8_data is greater than the first point of u8_solver
+        mask = mask & (u8_data < u8_solver[-1])  # Also ensure u8_data is less than the last point of u8_solver
+
+
+        u8_data = u8_data[mask]
+        sipm_data = sipm_data[mask]
+
+        f = interp1d(u8_solver, sipm_solver, kind='linear', fill_value="interpolate")
+        sipm_interp = f(u8_data)
+
+
+
+        diff = np.abs(np.log10(sipm_interp)-np.log10(1000*sipm_data))
+        print(f"Offset: {offset}, Sum of differences: {sum(diff)}")
+        solver_vs_experimental_fit.append(sum(diff))
+        
+        #plt.plot(u8_solver, np.log10(sipm_solver), marker="o", color="blue", label=f"offset = {offset}")
+        plt.plot(u8_data, np.log10(sipm_interp), linestyle="-", color="blue", label=f"offset = {offset}")
+        plt.plot(u8_data, np.log10(1000*sipm_data))
+        
+        plt.plot(u8_data, diff, linestyle="-", color="darkred", label=f"offset = {offset}")
+        plt.legend()
+        plt.xlabel("u8 (V)")
+        plt.ylabel("sipm (a.u.)")
+        plt.title("Solver vs Experimental Data Fit")
+        plt.show()
+    plt.plot(x_range, solver_vs_experimental_fit, marker="o", linestyle="-", color="blue")
+    plt.title("Fit of solver to experimental data vs offset", fontsize=20)
+    plt.yscale("log")
+
+    min_offset = x_range[np.argmin(solver_vs_experimental_fit)]
+    return min_offset
+
+#min_offset = find_offset(30)
+
+
+#%%
+
+offset_list = []
+
+for file_number in np.arange(1,502,50):
+    filepath1=iter_all('csv','Dec13')[file_number] #load data
+    #df = pd.read_csv(filepath1, header=None)
+    #u8_data = df[1].values*15   #u8 excitations
+    #sipm_data = df[0].values  #sipm (~escape rate)
+    offset = find_offset(file_number)
+    offset_list.append(offset)
+    u8_data, sipm_data = u8Correction(filepath1)
+    plt.scatter(u8_data,sipm_data, label = file_number, s = 4)
+plt.legend()
+plt.xlabel("u8 (V)")
+plt.ylabel("sipm (a.u.)")
+plt.title("u8 vs sipm for all files")
+plt.xlim(-54,-52)
+plt.show()
+    #list_offsets.append(min_offset)
+    #print(f"Best offset for file {file_number}: {min_offset}")
 
 # %%
