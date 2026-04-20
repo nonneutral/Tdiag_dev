@@ -42,13 +42,27 @@ electrode_input = [
 
 # Experimental results analysis (uncomment to run)
 #%%
-Recompute_Drops=True #trun to False to skip voltage drop recomputation 
-filepath1=iter_all('csv','../')[20] #load data
-offset=500 #offset to trim data for better fit - adjust as needed based on data length and quality
-measured_temp, err, xs, ys = analyse_experimental_results(filepath1, Recompute_Drops=Recompute_Drops, offset=offset)
 
-print(f"Extracted temperature: {measured_temp} K +-{err}")
-T_current = measured_temp
+file_names = []
+T_measured_list = []
+
+for file_number in np.arange(1,502,1):
+    print(f"Processing file number: {file_number}")
+    #file_number = 25
+    Recompute_Drops=True #trun to False to skip voltage drop recomputation 
+    filepath1=iter_all('csv','Dec13')[file_number] #load data
+    offset=150 #offset to trim data for better fit - adjust as needed based on data length and quality
+    measured_temp, err, xs, ys = analyse_experimental_results(filepath1, Recompute_Drops=Recompute_Drops, offset=offset)
+
+    print(f"Extracted temperature: {measured_temp} K +-{err}")
+    T_current = measured_temp
+    T_measured_list.append(T_current)
+    file_names.append(filepath1)
+
+np.savetxt(f"measured_T__offset_{offset}.csv", np.array([file_names, T_measured_list]), delimiter=",", fmt="%s")
+
+
+
 #T_current = 100
 # %% full scan for T_diag vs T_actual (step 4-8), now run as explicit pipeline steps
 print(f"T = {T_current}")

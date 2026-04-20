@@ -588,7 +588,7 @@ def auto_flank_from_slope(xs, ys,
 
     return (iL, iR), baseline, sigma, thr_high, thr_low, dy_use, ys_s, xs, ys
 
-def extract_measured_temp(drops, sipm_roi_for_fit):
+def extract_measured_temp(drops, sipm_roi_for_fit,filepath):
     x = -np.asarray(drops, dtype=float)
     sipm = np.asarray(sipm_roi_for_fit, dtype=float)
 
@@ -741,19 +741,32 @@ def extract_measured_temp(drops, sipm_roi_for_fit):
             color="#1418E2",        
             linewidth=2,
             label=f"fit: y={m:.3g}x+{b:.3g}")
+    
+    # saving figure
+    base = os.path.basename(filepath)        # "132740.504.csv"
+    name = os.path.splitext(base)[0]          # "132740.504"
 
+    # --- Define plots folder inside Dec13 ---
+    folder = os.path.join("Dec13", "plots")
+    os.makedirs(folder, exist_ok=True)
+
+    # --- Full save path ---
+    save_path = os.path.join(folder, f"{name}_step_1_plot.png")
+
+    plt.text(0.0, 0.95, f"File Name = {name}\n Measured Temp = {Measured_Temp:.1f} K\n error = {err:.3g}",)
     plt.xlabel("Confinement (V)", size=18)
     plt.ylabel("log(|SiPM|)", size=18)
     plt.grid(True, linestyle="--")
     plt.legend()
     plt.tight_layout()
+    plt.savefig(save_path)
     plt.show()
     
     return Measured_Temp, err, xs, ys
 
 #%% - TEST RUN
 
-def analyse_experimental_results(filepath1, Recompute_Drops=True, offset=1000):
+def analyse_experimental_results(filepath1, Recompute_Drops=True, offset=150):
     #converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8(filepath1)
     initial_voltages=np.array([0,-63,-50,-130,0]) #in volts
     final_voltages=np.array([0,0,-50,-130,0], dtype=float) #in volts
@@ -774,20 +787,25 @@ def analyse_experimental_results(filepath1, Recompute_Drops=True, offset=1000):
         float(rw)
     ]
     if Recompute_Drops: 
-        converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8(filepath1,offset)
-        drops = getTotalVoltageDropProfile(converted_voltages, debug_steps=(0, len(converted_voltages)//2, -1))   
+        use_fast_method = True
+
+        if use_fast_method:
+            drops, u8, sipm_roi_for_fit = convert_u8_array_to_vacdrop_array(filepath1, electrode_input, offset, nr=20, nz=40, rad2=0.0008) #use the direct conversion for speed since we know the fit is good from testing - skip the full drop recomputation which is slow
+            drops = np.asarray(drops[:])
+            u8 = np.asarray(u8[:])
+            sipm_roi_for_fit = np.asarray(sipm_roi_for_fit[:])
+
+        elif use_fast_method == False:
+            converted_voltages, _, _, sipm_roi_for_fit = fit_and_convert_u8(filepath1,offset)
+            drops = getTotalVoltageDropProfile(converted_voltages, debug_steps=(0, len(converted_voltages)//2, -1))   
         
-        #drops, u8, sipm_roi_for_fit = convert_u8_array_to_vacdrop_array(filepath1,electrode_input,nr=20,nz=40,rad2=0.0008) #use the direct conversion for speed since we know the fit is good from testing - skip the full drop recomputation which is slow
-        #drops = np.asarray(drops[10000:])
-        #u8 = np.asarray(u8[10000:])
-        #sipm_roi_for_fit = np.asarray(sipm_roi_for_fit[10000:])
         print(drops)
         plt.plot(drops,sipm_roi_for_fit, 'o-')
         plt.xlabel("Voltage Drop")
         plt.ylabel("SiPM (ROI)")
         plt.title("SiPM vs Voltage Drop (ROI)")
         plt.grid(True, linestyle="--", alpha=0.7)
-    temp,err, xs, ys = extract_measured_temp(drops, sipm_roi_for_fit)
+    temp,err, xs, ys = extract_measured_temp(drops, sipm_roi_for_fit,filepath1)
     print(f"Extracted temperature: {temp} K")
 
     now=str(datetime.now())

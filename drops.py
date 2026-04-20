@@ -23,7 +23,82 @@ def iter_all(substring, path):
         for entry in dirs + files
         if substring in entry
     )
-def u8Correction(filename):
+
+def auto_roi_from_dip(x, y, smooth_window=71, polyorder=3, baseline_quantile=0.90,
+                      sigma_low=3.5, sigma_high=2.0, prepad=500): 
+    '''
+    Automatically detects a dip in the data and defines a region of interest (ROI) around it.
+    
+    Inputs: x (array-like): x-axis data (e.g., time indices)
+            y (array-like): y-axis data (e.g., SiPM signal)
+            smooth_window (int): window size for Savitzky-Golay filter (must be odd)
+            polyorder (int): polynomial order for Savitzky-Golay filter
+            baseline_quantile (float): quantile to estimate baseline level
+            sigma_low (float): number of sigmas below baseline to define dip threshold
+            sigma_high (float): number of sigmas for hysteresis threshold to find edges
+            prepad (int): number of points to pad on the left side of the detected dip for the ROI
+            
+    Returns: mask (boolean array): True for points in the ROI, False otherwise
+            x_left (float): x-value of the left edge of the ROI
+            x_right (float): x-value of the right edge of the ROI
+            (i_left, i_right): indices of the left and right edges of the ROI
+            baseline (float): estimated baseline level
+            sigma (float): estimated noise level (sigma)
+            thr_high (float): high threshold for edge detection
+            thr_low (float): low threshold for dip detection 
+    '''
+    x = np.asarray(x)
+    y = np.asarray(y)
+
+    n = len(y)
+    if n < 10:
+        raise ValueError("Not enough points for ROI detection.")
+
+    w = min(smooth_window, n - (1 - (n % 2))) #make sure window is odd and <= n - sort of failsafe
+    if w < 5:
+        y_s = y.copy()
+    else:
+        if w % 2 == 0:
+            w -= 1
+        y_s = savgol_filter(y, window_length=w, polyorder=min(polyorder, w-1))
+
+    baseline = np.quantile(y_s, baseline_quantile)
+
+    #NEW DEFINITION OF SIGMA
+    hi = y_s[y_s >= baseline]
+    if len(hi) > 20:
+        med = np.median(hi)
+        mad = np.median(np.abs(hi - med))
+        sigma = 1.4826 * mad if mad > 0 else (np.std(hi) + 1e-12)
+    else:
+        med = np.median(y_s)
+        mad = np.median(np.abs(y_s - med))
+        sigma = 1.4826 * mad if mad > 0 else (np.std(y_s) + 1e-12)
+
+    i0 = int(np.argmin(y_s))
+
+    thr_low  = baseline - sigma_low  * sigma   # must cross this to count as dip
+    thr_high = baseline - sigma_high * sigma   # hysteresis to find edges
+
+    #If no dip detected then fail - failsafe 3
+    if y_s[i0] > thr_low:
+        mask = np.zeros(n, dtype=bool)
+        return mask, None, None, (None, None), baseline, sigma, thr_high, thr_low
+
+    #Expand from minimum to find dip edges
+    i_left = i0
+    while i_left > 0 and y_s[i_left] < thr_high:
+        i_left -= 1
+
+    #Pad in TIME
+    i_left = max(0, i_left - prepad)
+
+    mask = np.zeros(n, dtype=bool)
+    mask[i_left:i0] = True     
+
+    return mask, x[i_left], x[i0], (i_left, i0), baseline, sigma, thr_high, thr_low
+
+def u8Correction(filename,offset):
 
     try:
         df = pd.read_csv(filename, header=None)
@@ -34,8 +109,17 @@ def u8Correction(filename):
     sipm_data = df[0].values  #sipm (~escape rate)
     u8_data = df[1].values    #u8 excitations
 
+    sipm_data = sipm_data[offset:len(sipm_data)]
+    u8_data = u8_data[0:-offset]
+    
+    mask, xL, xR, (iL, iR), baseline, sig, thr_high, thr_low = auto_roi_from_dip(u8_data, sipm_data) #Auto-detect ROI around dip
+
+
     print(np.shape(sipm_data))
     print(np.shape(u8_data))
+
+    u8_data = u8_data[mask]
+    sipm_data = sipm_data[mask]
 
     order = np.argsort(u8_data)
 
@@ -46,20 +130,20 @@ def u8Correction(filename):
     u8vsT_fit = np.polyfit(t_data,u8_ordered,4)
     #print(u8vsT_fit)
     u8_ordered_fit = np.polyval(u8vsT_fit,t_data)
+    u8_corrected = u8_ordered_fit * 15
 
     #plt.plot(t_data,u8_ordered)
     #plt.plot(t_data,u8_ordered_fit, color="g",ms=0.4)
     #plt.show()
     #plt.plot(abs(u8_ordered_fit-u8_ordered))
     #plt.show()
-    u8_corrected = u8_ordered_fit * 15
     #plt.scatter(t_data,u8_ordered*15, label="original", marker=".", color="orange", s=2)
     #plt.scatter(t_data,u8_corrected, label="corrected", marker=".", color="blue", s=2)
-    plt.legend()
-    plt.title("u8 correction")
-    plt.xlabel("time (arb)")
-    plt.ylabel("u8 (arb)")
-    plt.show()
+    #plt.legend()
+    #plt.title("u8 correction")
+    #plt.xlabel("time (arb)")
+    #plt.ylabel("u8 (arb)")
+    #plt.show()
 
     return u8_corrected, sipm_ordered
 #%%
@@ -226,45 +310,38 @@ def u8_to_drop(unit_solutions, u8_input, initial_voltages, nz, Rlim, Llim):
 
     return VoltageDrop, peak_idx, barrier_idx
 
-def convert_u8_array_to_vacdrop_array(filepath, electrode_input,nr,nz,rad2):
+def convert_u8_array_to_vacdrop_array(filepath, electrode_input, offset, nr, nz, rad2):
     initial_voltages, final_voltages, electrode_borders, Llim, Rlim, rw = electrode_input
-    u8_corrected, sipm_ordered = u8Correction(filepath)
+    u8_corrected, sipm_ordered = u8Correction(filepath,offset)
     unit_solutions, unit_free_1ds, position_map_r, position_map_z = unitFreeSpaceSolutionsCalculation(electrode_input, nr=nr, nz=nz, rad2=rad2)
-    plt.scatter(u8_corrected,sipm_ordered,marker=".")
-    plt.title("sipm vs u8")
-    plt.xlabel("u8 (arb)")
-    plt.ylabel("sipm (arb)")
-    for voltages in unit_solutions:
-        plt.imshow(voltages, aspect='auto', origin='lower')
-        plt.colorbar(label="Potential")
-        plt.xlabel("z index")
-        plt.ylabel("r index")
-        plt.title("2D Potential Map")
-    plt.show()
-
-    for voltages in unit_free_1ds:
-        plt.plot(position_map_z[0],voltages)
-    plt.show()
+    #plt.scatter(u8_corrected,sipm_ordered,marker=".")
+    #plt.title("sipm vs u8")
+    #plt.xlabel("u8 (arb)")
+    #plt.ylabel("sipm (arb)")
+    #for voltages in unit_solutions:
+    #    plt.imshow(voltages, aspect='auto', origin='lower')
+    #    plt.colorbar(label="Potential")
+    #    plt.xlabel("z index")
+    #    plt.ylabel("r index")
+    #    plt.title("2D Potential Map")
+    #plt.show()
 
 
-    fig, axes = plt.subplots(len(unit_solutions), 1, figsize=(10, 8), sharex=True)
+    #fig, axes = plt.subplots(len(unit_solutions), 1, figsize=(10, 8), sharex=True)
 
-    for i, voltages in enumerate(unit_solutions):
-        im = axes[i].imshow(voltages, aspect='auto', origin='lower')
-        axes[i].set_ylabel("r index")
-        axes[i].set_title(f"2D Potential Map {i+1}")
-        
-        # Attach colorbar to each subplot
-        fig.colorbar(im, ax=axes[i], label="Potential")
+    #for i, voltages in enumerate(unit_solutions):
+    #    im = axes[i].imshow(voltages, aspect='auto', origin='lower')
+    #    axes[i].set_ylabel("r index")
+    #    axes[i].set_title(f"2D Potential Map {i+1}")
+    #    
+    #    # Attach colorbar to each subplot
+    #    fig.colorbar(im, ax=axes[i], label="Potential")
 
-    axes[-1].set_xlabel("z index")
+    #axes[-1].set_xlabel("z index")
 
-    plt.tight_layout()
-    plt.show()
+    #plt.tight_layout()
+    #plt.show()
 
-    for voltages in unit_free_1ds:
-        plt.plot(position_map_z[0],voltages)
-    plt.show()
 
     drops_data = np.zeros_like(u8_corrected)
 
@@ -275,24 +352,23 @@ def convert_u8_array_to_vacdrop_array(filepath, electrode_input,nr,nz,rad2):
     n_points = len(u8_corrected)
     colors = red_blue(np.linspace(0, 1, n_points))  # first point red, last blue
 
-
     for i, u8 in enumerate(u8_corrected):
         voltages = np.array([0,u8,-50,-130,0])
         drop,peak_idx,barrier_idx = u8_to_drop(unit_solutions,u8,voltages,nz,Rlim,Llim)
-        print(f"i: {i}/{len(u8_corrected)}, u8: {u8}, drop: {drop:.10E}")
+        #print(f"i: {i}/{len(u8_corrected)}, u8: {u8}, drop: {drop:.10E}")
         drops_data[i]=drop
-        if i%250==0:
-            plt.plot(position_map_z[0],superpose_potential(unit_solutions,voltages)[0],zorder=1, color=colors[i])
-            if not np.isnan(drop):
-                plt.scatter(position_map_z[0,peak_idx],
-                            superpose_potential(unit_solutions,voltages)[0,peak_idx],
-                            color="black",marker="^",zorder=2,s=4)
-                plt.scatter(position_map_z[0,barrier_idx],
-                            superpose_potential(unit_solutions,voltages)[0,barrier_idx],
-                            color="black",marker="^",zorder=2,s=4)
-    plt.ylabel(f"Potential (V)")
-    plt.xlabel(f"Axial position (m)")
-    plt.show()
+        #if i%250==0:
+        #    plt.plot(position_map_z[0],superpose_potential(unit_solutions,voltages)[0],zorder=1, color=colors[i])
+        #    if not np.isnan(drop):
+        #        plt.scatter(position_map_z[0,peak_idx],
+        #                    superpose_potential(unit_solutions,voltages)[0,peak_idx],
+        #                    color="black",marker="^",zorder=2,s=4)
+        #        plt.scatter(position_map_z[0,barrier_idx],
+        #                    superpose_potential(unit_solutions,voltages)[0,barrier_idx],
+        #                    color="black",marker="^",zorder=2,s=4)
+    #plt.ylabel(f"Potential (V)")
+    #plt.xlabel(f"Axial position (m)")
+    #plt.show()
 
     mask = ~np.isnan(drops_data)
 
@@ -300,44 +376,27 @@ def convert_u8_array_to_vacdrop_array(filepath, electrode_input,nr,nz,rad2):
     u8_corrected = u8_corrected[mask]
     sipm_corrected = sipm_ordered[mask]
 
-    plt.scatter(u8_corrected, sipm_corrected, marker=".", color="green")
-    plt.title("u8 vs sipm")
-    plt.xlabel("u8 (arb)")
-    plt.ylabel("Vacuum drop (V)")
-    plt.show()
+    #plt.plot(u8_corrected, drops_data, marker=".", color="green")
+    #plt.title("Vacuum drop vs u8")
+    #plt.xlabel("u8 (arb)")
+    #plt.ylabel("Vacuum drop (V)")
+    #plt.show()
 
-    plt.scatter(drops_data, np.log10(-sipm_corrected), marker=".", color="purple")
-    plt.title("Vacuum drop vs sipm")
-    plt.xlabel("Vacuum drop (V)")
-    plt.ylabel("sipm (arb)")
-    plt.xlim(-0.5, 0.5)
-    plt.gca().invert_xaxis()
-    plt.show()
+
+    #plt.scatter(u8_corrected, sipm_corrected, marker=".", color="green")
+    #plt.title("u8 vs sipm")
+    #plt.xlabel("u8 (arb)")
+    #plt.ylabel("Vacuum drop (V)")
+    #plt.show()
+
+    #plt.scatter(drops_data, np.log10(-sipm_corrected), marker=".", color="purple")
+    #plt.title("Vacuum drop vs sipm")
+    #plt.xlabel("Vacuum drop (V)")
+    #plt.ylabel("sipm (arb)")
+    #plt.xlim(0,2)
+    #plt.gca().invert_xaxis()
+    #plt.show()
     return drops_data, u8_corrected, sipm_corrected
 
 #convert_u8_array_to_vacdrop_array(filepath1, electrode_input, nr, nz, rad2)
 #returns drops_data, u8_corrected, sipm_corrected
-
-# Initial Input Values
-initial_voltages=np.array([0,-63,-50,-130,0]) #in volts
-final_voltages=np.array([0,0,-50,-130,0], dtype=float) #in volts
-electrode_borders=[0.025,0.050,0.100,0.125] #in meters
-Llim=0.035
-Rlim=0.115
-rw=.017 #radius of inner wall of cylindrical electrodes, in meters
-rampfrac=0.9
-current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages) * rampfrac
-
-electrode_input = [
-    np.array(initial_voltages),
-    np.array(final_voltages),
-    np.array(electrode_borders),
-    float(Llim),
-    float(Rlim),
-    float(rw)
-]
-
-filepath1=iter_all('csv','../')[20] #load data
-
-
-drops_data, u8_corrected, sipm_corrected = convert_u8_array_to_vacdrop_array(filepath1, electrode_input, nr=30, nz=60, rad2=0.0008)
