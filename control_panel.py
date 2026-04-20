@@ -46,22 +46,37 @@ electrode_input = [
 file_names = []
 T_measured_list = []
 
-for file_number in np.arange(1,502,1):
+file_names = []
+offset_used = []
+T_measured_list = []
+
+for file_number in np.arange(1, 502, 1):
     print(f"Processing file number: {file_number}")
-    #file_number = 25
-    Recompute_Drops=True #trun to False to skip voltage drop recomputation 
-    filepath1=iter_all('csv','Dec13')[file_number] #load data
-    offset=150 #offset to trim data for better fit - adjust as needed based on data length and quality
-    measured_temp, err, xs, ys = analyse_experimental_results(filepath1, Recompute_Drops=Recompute_Drops, offset=offset)
+    
+    Recompute_Drops = True  # turn to False to skip voltage drop recomputation
+    filepath1 = iter_all('csv', 'Dec13')[file_number]  # load data
 
-    print(f"Extracted temperature: {measured_temp} K +-{err}")
-    T_current = measured_temp
-    T_measured_list.append(T_current)
-    file_names.append(filepath1)
+    for offset in [150, 700, 1000]:
+        measured_temp, err, xs, ys = analyse_experimental_results(
+            filepath1,
+            Recompute_Drops=Recompute_Drops,
+            offset=offset
+        )
 
-np.savetxt(f"measured_T__offset_{offset}.csv", np.array([file_names, T_measured_list]), delimiter=",", fmt="%s")
+        print(f"Offset {offset}: Extracted temperature: {measured_temp} K +- {err}")
 
+        T_measured_list.append(measured_temp)
+        file_names.append(filepath1)
+        offset_used.append(offset)
 
+np.savetxt(
+    "measured_T_all_offsets.csv",
+    np.array([file_names, offset_used, T_measured_list], dtype=object).T,
+    delimiter=",",
+    fmt="%s",
+    header="file_name,offset,measured_temp",
+    comments=""
+)
 
 #T_current = 100
 # %% full scan for T_diag vs T_actual (step 4-8), now run as explicit pipeline steps

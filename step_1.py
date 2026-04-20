@@ -499,50 +499,87 @@ def auto_flank_from_slope(xs, ys,
     #thr_curve = np.quantile(curvature_use_s, 0.10)  # also require high curvature to avoid flat regions with noise spikes
 
     def attempt(sl, sh, mp):
-        #tl = baseline + sl * sigma
-        #th = baseline + sh * sigma
-        #IMPORTANT: don’t let "th" be tiny; keep only the steep part near the peak
-        #th = max(thr_high, 0.90 * peak)   #0.10–0.25 are typical; bigger = narrower
         tl = thr_low
         th = thr_high
-        if peak < tl:
-            return None, None, th, tl
 
-        gap_max = 4  #allow up to 8 consecutive points below threshold while expanding
+        s = dy_use_s   # ALWAYS use smoothed slope for region detection
 
-        iL = i0
-        gap = 0
-        while iL > 0:
-            if dy_use_s[iL-1] > th:
-                gap = 0
-                iL -= 1
+        # helper: find first sustained run >= threshold
+        def first_run_above(arr, threshold, run_len=5):
+            count = 0
+            start_idx = None
+            for i, val in enumerate(arr):
+                if val >= threshold:
+                    if count == 0:
+                        start_idx = i
+                    count += 1
+                    if count >= run_len:
+                        return start_idx
+                else:
+                    count = 0
+                    start_idx = None
+            return None
+
+        # helper: find first sustained run < threshold after a given point
+        def first_run_below_after(arr, threshold, start, run_len=5):
+            count = 0
+            start_idx = None
+            for i in range(start, len(arr)):
+                if arr[i] < threshold:
+                    if count == 0:
+                        start_idx = i
+                    count += 1
+                    if count >= run_len:
+                        return start_idx
+                else:
+                    count = 0
+                    start_idx = None
+            return None
+
+        # ---------------------------
+        # STEP 1: choose activation threshold
+        # ---------------------------
+        start_high = first_run_above(s, th, run_len=5)
+
+        if start_high is not None:
+            # normal case: proper crossing of HIGH threshold
+            start_idx = start_high
+        else:
+            # fallback case:
+            # if there is still a meaningful rise, allow activation at a weaker threshold
+            # only if the peak is genuinely above baseline
+            if peak < baseline + 2.0 * sigma:
+                return None, None, th, tl
+
+            th_fallback = baseline + 0.6 * (peak - baseline)
+            start_fallback = first_run_above(s, th_fallback, run_len=5)
+
+            if start_fallback is not None:
+                start_idx = start_fallback
             else:
-                gap += 1
-                iL -= 1
-                if gap > gap_max:
-                    break
+                # last resort: sustained crossing of LOW threshold
+                start_low = first_run_above(s, tl, run_len=8)
+                if start_low is None:
+                    return None, None, th, tl
+                start_idx = start_low
 
-        iR = i0
-        gap = 0
-        while iR < n-1:
-            if dy_use_s[iR+1] > th:
-                gap = 0
-                iR += 1
-            else:
-                gap += 1
-                iR += 1
-                if gap > gap_max:
-                    break
+        # ---------------------------
+        # STEP 2: grow region until sustained drop below LOW threshold
+        # ---------------------------
+        end_idx = first_run_below_after(s, tl, start_idx + 1, run_len=5)
+        if end_idx is None:
+            end_idx = len(s) - 1
+        else:
+            end_idx = max(start_idx, end_idx - 1)
 
-
-        iL = max(0, iL - pad_points)
-        iR = min(n-1, iR + pad_points)
+        iL = max(0, start_idx - pad_points)
+        iR = min(n - 1, end_idx + pad_points)
 
         if (iR - iL + 1) < mp:
             return None, None, th, tl
 
         return iL, iR, th, tl
-
+    
     iL, iR, thr_high, thr_low = attempt(sigma_low, sigma_high, min_pts)
 
     fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
