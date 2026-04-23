@@ -1,5 +1,7 @@
-# Solver for plasma of known number of electrons (NVal), temperature (T_e), and rotation frequency (fE)
+# Solver for electron plasma of known number of electrons (NVal), temperature (T_e), and rotation frequency (fE)
 
+import os
+import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import cm
@@ -7,6 +9,15 @@ from scipy import special
 from pylab import rcParams
 
 rcParams['figure.figsize'] = 10, 6
+os.chdir(os.path.expanduser("~/Documents/python/wabag/plasma2024/"))
+path='LabVIEWpots_sectionV'
+LVpots = pd.read_csv(path, header=None, sep="\t").values
+LVoffset = 0.306 #meters
+Llim=0.035 #meters
+Rlim=0.115 #meters
+LVpots[:,0]=LVpots[:,0]+LVoffset
+LVpots[:,1]=LVpots[:,1]*(-1) #-1 for e+ as e-
+LVpots=LVpots[(LVpots[:,0]>Llim) & (LVpots[:,0]<Rlim)]
 
 rw=.017 #radius of inner wall of cylindrical electrodes, in meters
 q_e=1.60217662e-19
@@ -156,6 +167,7 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
                 #       f'\t misplaced electrons = {err:0.1e}'
                 #       )
                 plt.title("on-axis potential")
+                plt.plot(LVpots[:,0],LVpots[:,1],label="LabVIEW electrode potential")
                 plt.plot(position_map_z[0,:],free_space_solution[0,:],label="solver electrode potential")
                 plt.plot(position_map_z[0,:],voltageGuess[0,:],label="charge-corrected potential")
                 plt.ylabel("potential (V)")
@@ -170,7 +182,7 @@ def find_solution(NVal,T_e,fE,mur2,B,electrodeConfig,left,right,zpoints,rpoints,
     NS=ngrid*volume_elements
     rmean=np.sqrt(np.sum(mursq*NS)/(np.sum(NS)))*rbound/nr
     phi=np.max(free_space_solution[0,:])-np.max(voltageGuess[0,:])
-    print('N, φ, ρ, r_0, λ_D')
+    #print('N, φ, ρ, r_0, λ_D')
     print(f'{NVal:0.3e}\t{T_e:0.3e}\t{phi:0.3e}\t{n0:0.3e}\t{rmean:0.3e}\t{debye_length:0.3e}')
 
     if plotting:  
@@ -223,16 +235,13 @@ voltageGuess: the potential of each grid point (a matrix)
 free_space_solution: the potential of each point in the absence of charge (a matrix)
 rmean: average radius
 """
-initial_voltages=np.array([0,-50,-10,-50,0])
-final_voltages=np.array([0,-15,-10,-50,0])
+electrode_voltages=[0,-20,3.5,-21,0]
 electrode_borders=[0.025,0.050,0.100,0.125]
-Llim=0.035
-Rlim=0.100
-rampfrac=0.9
-current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages)*rampfrac
-sol1=find_solution(NVal=8.0e6,T_e=1960,fE=1.0e5,mur2=0.00165,B=1.6,
-                   electrodeConfig=(current_voltages,electrode_borders),
-                   left=Llim,right=Rlim,zpoints=40,rpoints=20,rfact=3.0,plotting=True)
+for i in range(1):
+    fenow=(8.9+10+i)*9.5e3  
+    sol1=find_solution(NVal=73e6,T_e=35,fE=fenow,mur2=0.0015,B=2.0,
+                       electrodeConfig=(electrode_voltages,electrode_borders),
+                       left=Llim,right=Rlim,zpoints=50,rpoints=15,rfact=3.0,plotting=True)
 
 n=sol1[0]
 voltageGuess=sol1[3]
