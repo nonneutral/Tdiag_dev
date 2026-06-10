@@ -376,12 +376,19 @@ def convert_u8_array_to_vacdrop_array(filepath, electrode_input, offset, nr, nz,
     u8_corrected = u8_corrected[mask]
     sipm_corrected = sipm_ordered[mask]
 
-    #plt.plot(u8_corrected, drops_data, marker=".", color="green")
-    #plt.title("Vacuum drop vs u8")
-    #plt.xlabel("u8 (arb)")
-    #plt.ylabel("Vacuum drop (V)")
-    #plt.show()
+    print(f"Computed drops for {len(drops_data)} points after filtering NaNs.")
 
+    plt.plot(u8_corrected, drops_data, marker=".", color="green")
+
+    plt.title("Vacuum drop vs u8", fontsize=20)
+    plt.xlabel("u8 (arb)", fontsize=20)
+    plt.ylabel("Vacuum drop (V)", fontsize=20)
+    plt.vlines(x=np.max(u8_corrected)-0.8600360337526283, ymin=np.min(drops_data), ymax=np.max(drops_data), colors='red', linestyles='dashed', label="800 offset")
+    plt.vlines(x=np.max(u8_corrected)-1.0681179669016814, ymin=np.min(drops_data), ymax=np.max(drops_data), colors='red', linestyles='dashed', label="1000 offset")    
+    plt.vlines(x=np.max(u8_corrected)-0.16455044061267188, ymin=np.min(drops_data), ymax=np.max(drops_data), colors='red', linestyles='dashed', label="150 offset")    
+    plt.tick_params(axis='both', labelsize=16)
+    plt.legend(fontsize=16)
+    plt.show()
 
     #plt.scatter(u8_corrected, sipm_corrected, marker=".", color="green")
     #plt.title("u8 vs sipm")

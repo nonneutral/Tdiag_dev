@@ -1,12 +1,15 @@
 # %%
+import gc
 import numpy as np
 import matplotlib.pyplot as plt
 from solver2 import *
 from step_1 import analyse_experimental_results, iter_all, extract_measured_temp
 from scipy.interpolate import interp1d
+import time
+import os, psutil
 
 # Input 
-N_e=3e5 #number of electrons
+N_e=3e7 #number of electrons
 #T_e=1960 #plasma temperature in kelvin
 rad2=0.0008 #plasma radius in meters
 B2=2 #magnetic field in tesla
@@ -21,7 +24,7 @@ freq_guess = 2.0e6
 omega_r  = 2*np.pi*freq_guess
 
 # Initial Input Values
-initial_voltages=np.array([0,-63,-50,-130,0]) #in volts
+initial_voltages=np.array([0,-100,-50,-130,0]) #in volts
 final_voltages=np.array([0,0,-50,-130,0], dtype=float) #in volts
 electrode_borders=[0.025,0.050,0.100,0.125] #in meters
 Llim=0.035
@@ -30,6 +33,8 @@ rw=.017 #radius of inner wall of cylindrical electrodes, in meters
 rampfrac=0.9
 current_voltages=np.array(initial_voltages) + (final_voltages-initial_voltages) * rampfrac
 
+rpoints = 40
+zpoints = 80
 
 electrode_input = [
     np.array(initial_voltages),
@@ -50,13 +55,16 @@ file_names = []
 offset_used = []
 T_measured_list = []
 
-for file_number in np.arange(1, 502, 1):
+files = iter_all('csv', 'Dec13')
+range_to_process = np.array([124])  # Adjust this range based on the number of files you have
+for file_number in range_to_process:
+    filepath1 = files[file_number]   
     print(f"Processing file number: {file_number}")
-    
-    Recompute_Drops = True  # turn to False to skip voltage drop recomputation
-    filepath1 = iter_all('csv', 'Dec13')[file_number]  # load data
 
-    for offset in [150, 700, 1000]:
+    Recompute_Drops = True  # turn to False to skip voltage drop recomputation
+
+    for offset in [1]:
+        start = time.time()
         measured_temp, err, xs, ys = analyse_experimental_results(
             filepath1,
             Recompute_Drops=Recompute_Drops,
@@ -68,28 +76,33 @@ for file_number in np.arange(1, 502, 1):
         T_measured_list.append(measured_temp)
         file_names.append(filepath1)
         offset_used.append(offset)
-
+        process = psutil.Process(os.getpid())
+        print(f"Memory: {process.memory_info().rss / 1e6:.1f} MB")
+        print(f"Time: {time.time() - start:.2f}s")
+        gc.collect()
 np.savetxt(
-    "measured_T_all_offsets.csv",
+    f"file_({str(range_to_process)})_measured_T_all_offsets.csv",
     np.array([file_names, offset_used, T_measured_list], dtype=object).T,
     delimiter=",",
     fmt="%s",
     header="file_name,offset,measured_temp",
-    comments=""
 )
 
-#T_current = 100
 # %% full scan for T_diag vs T_actual (step 4-8), now run as explicit pipeline steps
-print(f"T = {T_current}")
+T_current = 1 
+print(f"T_current = {T_current}")
 
 plasma_config = [float(N_e), float(T_current), float(omega_r), float(rad2), float(B2)]
 
 
 #user-chosen scan window (VOLTS)
-start_drop = 0.5
+start_drop = 10*kb*T_current/q_e
 end_drop   = -0.5
 d_points = 100
 initial_scan_points = 41
+
+savefile_string = f"full_scan_results_startdrop{start_drop:.3f}_T{T_current}_N{plasma_config[0]:.2e}.csv"
+#savefile_string = f"full_scan_results_rpoints{rpoints}_zpoints{zpoints}_T{T_current}_N{plasma_config[0]:.2e}.csv"
 
 #%% Step 1: retune omega_r
 
@@ -119,7 +132,7 @@ print(f"rf for 10 kT/e target: rf={rf_eg:.6f}, achieved_drop={achieved_drop_eg:.
 print(f"--- Finding fine solution for target drop of {target_drop_eg:.3f} V ---")
 fine_sol = protocol_step_4_find_solution(
     plasma_config, electrode_input, current_voltages_eg,
-    zpoints=80, rpoints=40, rfact=3.0,
+    zpoints=zpoints, rpoints=rpoints, rfact=3.0,
     plotting=True, coarse_sol_divisor=100
 )
 plot_density(fine_sol)
@@ -148,7 +161,7 @@ plot_escape_curve(ramp_values, escaped_list, frac_escaped_list, drop_list, yscal
 
 # Save
 np.savetxt(
-    f"T{T_current}_N{plasma_config[0]:.2e}_omega_r{plasma_config[2]:.2e}_rad{plasma_config[3]}_B{plasma_config[4]}.csv",
+    f"{savefile_string}",
     np.array([ramp_values, escaped_list, frac_escaped_list, drop_list, vacdrop_list]),
     delimiter=","
 )
@@ -162,7 +175,7 @@ T_actual = T_current
 Tvac, errvac = linear_model_T_diag(
     escaped_list, vacdrop_list,
     "Log(Escaped electrons) vs Confinement with Linear Fit, vacdrop",
-    xlabel_str="confinement voltage / V",
+    xlabel_str=r"Confinement $V_b$ (V)",
     saveplotttitle="Escape_plot_vac",
     crop_factor_input=0.591
 )
@@ -172,8 +185,8 @@ print(f"Percentage Error: {abs(Tvac - T_actual) / T_actual * 100:.2f}%")
 
 Tdrop, errdrop = linear_model_T_diag(
     escaped_list, drop_list,
-    "Log(Escaped electrons) vs Confinement with Linear Fit, vacdrop",
-    xlabel_str=r"confinement voltage ('drop') / V",
+    "Log(Escaped electrons) vs Space-Charge Corrected Confinement with Linear Fit",
+    xlabel_str=r"S-C Corrected Confinement $V_b - \phi_s$ (V)",
     saveplotttitle="Escape_plot_drop",
     crop_factor_input=0.591
 )
@@ -183,65 +196,121 @@ print(f"Percentage Error: {abs(Tdrop - T_actual) / T_actual * 100:.2f}%")
 
 #%%
 
-ramp_values, escaped_list, frac_escaped_list, drop_list, vacdrop_list = np.loadtxt("useful_data/T300_N3.00e+05_omega_r9.02e+04_rad0.0008_B2.0.csv",delimiter = ",")
+"""
+file_names = []
+T_measured_list = []
 
-y_plot = np.array(escaped_list)
-x_vac = np.array(vacdrop_list)
-x_drop = np.array(drop_list)
+file_names = []
+offset_used = []
+T_measured_list = []
 
-plt.figure(figsize=(6,4))
-plt.scatter(x_vac, np.log10(y_plot))
-#plt.scatter(x_vac, np.log(y_plot))
-plt.xlabel("vacuum drop (V)")
-plt.ylabel("number of escaped electrons")
-plt.title("Escaped electrons vs Vacuum Drop")
-#plt.yscale('log')
-plt.gca().invert_xaxis()
-plt.show()
+T_new_list = []
 
+files = iter_all('csv', 'Dec13')
+range_to_process = np.array([173,183])  # Adjust this range based on the number of files you have
+for file_number in range_to_process:
+    filepath1 = files[file_number]   
+    print(f"Processing file number: {file_number}")
 
-x_data = np.abs(xs)
-f = interp1d(x_vac, x_drop, kind='linear', fill_value="extrapolate")
-interp_step_1_scc_drop = f(x_data)
+    Recompute_Drops = True  # turn to False to skip voltage drop recomputation
 
+    for offset in [740, 800, 860]:
+        start = time.time()
+        measured_temp, err, xs, ys = analyse_experimental_results(
+            filepath1,
+            Recompute_Drops=Recompute_Drops,
+            offset=offset
+        )
 
-plt.plot(x_vac, x_drop, label="solver", marker='o', linestyle='-', color='orange', markersize=5, linewidth=1)
-plt.plot(x_data, interp_step_1_scc_drop, label="data_points", linestyle='-', color='blue', markersize=5, linewidth=1)
-plt.xlabel("vacuum confinement (V)")
-plt.ylabel("drop (V)")
-plt.title("Vacuum confinement vs Drop")
-plt.legend()
-plt.show()
+        print(f"Offset {offset}: Extracted temperature: {measured_temp} K +- {err}")
 
-plt.plot(x_vac, x_drop, label="vacuum drop vs drop", marker='o', linestyle='-', color='blue', markersize=5, linewidth=1)
-plt.plot(x_data, interp_step_1_scc_drop, label="x-axis for data", linestyle='-', color='red', markersize=5, linewidth=3)
-plt.xlabel("vacuum confinement (V)")
-plt.ylabel("drop (V)")
-plt.title("Vacuum confinement vs Drop")
-plt.grid(True, linestyle="--", alpha=0.7)
-plt.legend()
-plt.show()
-
-plt.plot(x_data, ys, label="data", marker='o', linestyle='-', color='orange', markersize=5, linewidth=1)
-plt.plot(vacdrop_list, np.log(escaped_list), label="vacuum drop", marker='o', linestyle='-', color='blue', markersize=5, linewidth=1)
-plt.xlabel("vacuum confinement (V)")
-plt.ylabel("number of escaped electrons")
-plt.gca().invert_xaxis()
-plt.title("Escaped electrons vs Vacuum Confinement")
-plt.legend()
-plt.show()
+        T_measured_list.append(measured_temp)
+        file_names.append(filepath1)
+        offset_used.append(offset)
+        process = psutil.Process(os.getpid())
+        print(f"Memory: {process.memory_info().rss / 1e6:.1f} MB")
+        print(f"Time: {time.time() - start:.2f}s")
+        gc.collect()
 
 
-plt.plot(interp_step_1_scc_drop, ys, label="SCC", marker='o', linestyle='-', color='orange', markersize=5, linewidth=1)
-plt.xlabel("drop (V)")
-plt.ylabel("number of escaped electrons")
-plt.grid()
-plt.gca().invert_xaxis()
-plt.title("Escaped electrons vs Drop (SCC)")
-plt.legend()
-plt.show()
 
-T_new, err_new, xs_new, ys_new = extract_measured_temp(interp_step_1_scc_drop,-np.exp(ys))
-print(f"Extracted temperature: {T_new} K +- {err_new}")
-print(f"First Estimate Temperature: {measured_temp:.2f} K")
+        ramp_values, escaped_list, vacdrop_list, drop_list, l_p_list = np.loadtxt("T_analysis_April_21(rampfrom10kBT)/260421_02_full_protocol_scan_T300.0K.csv",delimiter = ",")
+        
+
+        y_plot = np.array(escaped_list)
+        x_vac = np.array(vacdrop_list)
+        x_drop = np.array(drop_list)
+
+        plt.figure(figsize=(6,4))
+        plt.scatter(x_vac, np.log10(y_plot))
+        #plt.scatter(x_vac, np.log(y_plot))
+        plt.xlabel("vacuum drop (V)")
+        plt.ylabel("number of escaped electrons")
+        plt.title("Escaped electrons vs Vacuum Drop")
+        #plt.yscale('log')
+        plt.gca().invert_xaxis()
+        plt.show()
+
+
+
+        x_data = np.abs(xs)
+        f = interp1d(x_vac, x_drop, kind='linear', fill_value="extrapolate")
+        interp_step_1_scc_drop = f(x_data)
+
+
+        plt.plot(x_vac, x_drop, label="solver", marker='o', linestyle='-', color='orange', markersize=5, linewidth=1)
+        plt.plot(x_data, interp_step_1_scc_drop, label="data_points", linestyle='-', color='blue', markersize=5, linewidth=1)
+        plt.xlabel("vacuum confinement (V)")
+        plt.ylabel("drop (V)")
+        plt.title("Vacuum confinement vs Drop")
+        plt.legend()
+        plt.show()
+
+        plt.plot(x_vac, x_drop, label="vacuum drop vs drop", marker='o', linestyle='-', color='blue', markersize=5, linewidth=1)
+        plt.plot(x_data, interp_step_1_scc_drop, label="x-axis for data", linestyle='-', color='red', markersize=5, linewidth=3)
+        plt.xlabel("vacuum confinement (V)")
+        plt.ylabel("drop (V)")
+        plt.title("Vacuum confinement vs Drop")
+        plt.grid(True, linestyle="--", alpha=0.7)
+        plt.legend()
+        plt.show()
+
+        plt.plot(x_data, ys, label="data", marker='o', linestyle='-', color='orange', markersize=5, linewidth=1)
+        plt.plot(vacdrop_list, np.log(escaped_list), label="vacuum drop", marker='o', linestyle='-', color='blue', markersize=5, linewidth=1)
+        plt.xlabel("vacuum confinement (V)")
+        plt.ylabel("number of escaped electrons")
+        plt.gca().invert_xaxis()
+        plt.title("Escaped electrons vs Vacuum Confinement")
+        plt.legend()
+        plt.show()
+
+
+        plt.plot(interp_step_1_scc_drop, ys, label="SCC", marker='o', linestyle='-', color='orange', markersize=5, linewidth=1)
+        plt.xlabel("drop (V)")
+        plt.ylabel("number of escaped electrons")
+        plt.grid()
+        plt.gca().invert_xaxis()
+        plt.title("Escaped electrons vs Drop (SCC)")
+        plt.legend()
+        plt.show()
+
+        T_new, err_new, xs_new, ys_new = extract_measured_temp(interp_step_1_scc_drop,-10**(ys),filepath1)
+        print(f"Extracted temperature: {T_new} K +- {err_new}")
+        print(f"First Estimate Temperature: {measured_temp:.2f} K")
+
+        T_new_list.append(T_new)
+
+
+
+np.savetxt(
+    f"file_({str(range_to_process)})_measured_T_all_offsets.csv",
+    np.array([file_names, offset_used, T_measured_list,T_new_list], dtype=object).T,
+    delimiter=",",
+    fmt="%s",
+    header="file_name,offset,measured_temp",
+    comments=""
+)
+
+"""
+
 # %%

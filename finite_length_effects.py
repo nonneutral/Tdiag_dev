@@ -1,9 +1,8 @@
-# %%
+# %% This file is used to run the same code as control_panel.py multiple times with varying lengths.
 import numpy as np
 import matplotlib.pyplot as plt
 from solver2 import *
 from step_1 import analyse_experimental_results, iter_all
-
 
 def full_protocol(electrode_borders, T_current):
     
@@ -165,7 +164,7 @@ def full_protocol(electrode_borders, T_current):
     plt.title("Vacuum confinement vs Drop")
     plt.legend()
     plt.show()
-    return escaped_list, vacdrop_list, drop_list, l_p_list
+    return ramp_values,escaped_list, vacdrop_list, drop_list, l_p_list
 
 
 # %%
@@ -181,19 +180,12 @@ for d in np.arange(0.105, 0.106, 0.005):
 
     
 
-#for T in [1600,1700,1800,1900,2000]:
-#    print(f"Running full protocol with T={T} K")
-#    electrode_borders = [0.025, 0.050, 0.100, 0.125]
-#    print(f"Electrode borders: {electrode_borders}")
-#    escaped_list_now, vacdrop_list_now, drop_list_now = full_protocol(electrode_borders=[0.025, 0.050, 0.100, 0.125], T_current=T)
-#    np.savetxt(
-#        f"full_protocol_scan_T{T:.0f}K_trial2.csv",
-#        np.array([escaped_list_now, vacdrop_list_now, drop_list_now]),
-#        delimiter=",")
-# %%
-"""
-escaped_list_now, vacdrop_list_now, drop_list_now,l_p_list = full_protocol(electrode_borders=[0.025,0.050,0.100,0.125],T_current=200)
-"""
-# %%
-
-# %%
+for T in np.arange(50, 401, 25):
+    print(f"Running full protocol with T={T} K")
+    electrode_borders = [0.025, 0.050, 0.100, 0.125]
+    print(f"Electrode borders: {electrode_borders}")
+    ramp_values, escaped_list_now, vacdrop_list_now, drop_list_now, l_p_list = full_protocol(electrode_borders=[0.025, 0.050, 0.100, 0.125], T_current=T)
+    np.savetxt(
+        f"260421_03_full_protocol_scan_T{T:.1f}K.csv",
+        np.array([ramp_values, escaped_list_now, vacdrop_list_now, drop_list_now, l_p_list]),
+        delimiter=",")

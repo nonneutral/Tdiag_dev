@@ -1,3 +1,4 @@
+# This file is used to plot the final results. It is not used for any data processing, just for visualisation.
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -60,7 +61,7 @@ file_directory = iter_all('csv', 'T_analysis_April_21(rampfrom10kBT)')
 # =========================
 # Main loop (analysis + plot 1)
 # =========================
-fig1, ax1 = plt.subplots(figsize=(6.3, 5.0))  # A4 width
+fig1, ax1 = plt.subplots(figsize=(6.3, 6.0))  # A4 width
 sum_escaped = []
 where_ncyl_list = []
 crop_factor_list = []
@@ -151,11 +152,40 @@ plt.show()
 # Plot 2: Estimated vs Actual Temperature
 # =========================
 
-fig2, ax2 = plt.subplots()  # A4 width
+fig2, ax2 = plt.subplots(figsize=(6.3, 6.0))  # A4 width
 
-ax2.plot( T_estimate_list, T_list, marker="o", linewidth=2, label="Solver Temperature")
+
+data=np.loadtxt('temperature_summary_files_1_to_20.csv', delimiter=",", unpack=True, skiprows=1)
+
+file_indices_arr=data[0]
+T_actual_700_arr=data[1]
+T_actual_700_fiterr_arr=data[2]
+T_unc_low_arr=data[3]
+T_unc_high_arr=data[4]
+T_scc_arr=data[5]
+T_scc_err_arr=data[6]
+Tvac_solver_arr=data[7]
+Tdrop_solver_arr=data[8]
+
+ax2.errorbar(
+    T_actual_700_arr,
+    T_scc_arr,
+    xerr=[T_unc_low_arr, T_unc_high_arr],
+    yerr=T_scc_err_arr,
+    fmt='o',
+    elinewidth=2,
+    capsize=4,
+    label='Method 2 Temperatures ± Uncertainty',
+    color='red',
+    ecolor='gray'
+)
+
+min_val = min(np.min(T_actual_700_arr), np.min(T_scc_arr))
+max_val = max(np.max(T_actual_700_arr), np.max(T_scc_arr))
+
+
 ax2.plot(T_estimate_list, T_estimate_list, linestyle="--", linewidth=2, label="Linear-fit Temperature (y = x)")
-ax2.errorbar(T_estimate_list, T_list, yerr=T_err, fmt='o', color='blue', ecolor='gray', elinewidth=3, capsize=3, label="Actual Temperature ± 4%")
+ax2.errorbar(T_estimate_list, T_list, yerr=T_err, fmt='o', color='blue', ecolor='black', elinewidth=2, capsize=3, label="Method 1 Temperatures ± 4%")
 ax2.set_ylabel("Solver Temperature (K)")
 ax2.set_xlabel("Linear-fit Temperature (K)")
 ax2.set_title("Solver vs Linear-fit Temperature")
@@ -179,7 +209,7 @@ fig, (ax3, ax4) = plt.subplots(1, 2)  # A4 width
 # =========================
 ax3.plot(T_estimate_list, diff, marker="o", linewidth=2)
 ax3.axhline(0, linestyle="--")
-ax3.errorbar(T_estimate_list,diff,  yerr=T_err, fmt='o', color='blue', ecolor='gray', elinewidth=3, capsize=3, label="Actual Temperature ± 4%")
+ax3.errorbar(T_estimate_list,diff,  yerr=T_err, fmt='o', color='blue', ecolor='gray', elinewidth=3, capsize=3, label="Method 2 Temperatures ± 4%")
 ax3.invert_yaxis()
 ax3.set_xlabel("Linear-fit Temperature (K)")
 ax3.set_ylabel(r"$\Delta T = T_\text{Solver} - T_\text{Lin-fit}$ (K)")

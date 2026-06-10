@@ -268,8 +268,11 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
         nnew=np.zeros((nr,nz))
         nnew[mask]=np.exp(exponential[mask] - mx)
         
-
+        
         total=np.sum(nnew*volume_elements)
+
+        #plt.plot(position_map_z[0,:], sc_on)
+        #plt.plot(position_map_z[0,:], free_space_solution[0,:])
 
         peak_idx = int(np.argmax(free_on[roi_left_ind:])+roi_left_ind) 
         #print(f"peak_idx inside find_solution= {peak_idx}")
@@ -279,9 +282,10 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
             drop = sc_on[peak_idx] - sc_on[barrier_idx]
         else:
             drop = 0.0
-            isConfined = 0
+            isConfined = False
 
         isConfined = drop > 1*kb*T_e/q_e
+        
 
         # -------- FAIL-FAST GUARD #2: total <= 0 or non-finite -> normalization will explode --------
         if (not np.isfinite(total)) or (total <= 0):
@@ -344,7 +348,7 @@ def find_solution(N_e,T_e,omega_r,mur2,B,electrodeConfig,left,right,rw,zpoints,
     NS=ngrid*volume_elements
     rmean=np.sqrt(np.sum(mursq*NS)/(np.sum(NS)))*rbound/nr
     plasma_length=np.sqrt(np.sum(muzsq*NS)/(np.sum(NS)))*dz
-    phi=np.max(free_on)-np.max(sc_on)
+    phi=free_on[peak_idx]-sc_on[peak_idx]
 
 
 
@@ -471,7 +475,7 @@ def drop_for_rampfrac(plasma_config, electrode_input, rf): # finds "drop", i.e. 
         N_e=N_e, T_e=T_e, omega_r=omega_r, mur2=rad2, B=B2,
         electrodeConfig=(volts, electrode_borders),
         left=Llim, right=Rlim, rw=rw,
-        zpoints=80, rpoints=40, rfact=3.0,
+        zpoints=40, rpoints=20, rfact=3.0,
         plotting=True, coarse_sol_divisor=50,
         InitializeWithPlasmaLength=False, fail_action='return_none', debug_tag=f"rampfrac={rf:.3f}"
     ) # a "rough" solve
@@ -638,6 +642,7 @@ def escape_curve_scan(plasma_config, electrode_input, rampfrac_start, rampfrac_e
     #you can do this by finding the points for 20 kT/e and 10 kT/e and extrapolating
     N_e, T_e, omega_r, rad2, B2 = plasma_config
     initial_voltages,final_voltages,electrode_borders,Llim,Rlim,rw = electrode_input
+    escaped_cumulative_list = []
     escaped_list = []
     remaining_list = []
     frac_escaped_list = []
@@ -677,16 +682,16 @@ def escape_curve_scan(plasma_config, electrode_input, rampfrac_start, rampfrac_e
             print("Plasma not confined -- stopping early.")
             break
         
-        escaped_list.append(N_erfc)
+        escaped_cumulative_list.append(N_erfc)
 
         if i == 0:
             N_escaped = 0
         else:
-            N_escaped = escaped_list[i] - escaped_list[i - 1]
+            N_escaped = escaped_cumulative_list[i] - escaped_cumulative_list[i - 1]
         
         N_current = N_current - N_escaped
 
-        #escaped_list.append(N_escaped)
+        escaped_list.append(N_escaped)
         remaining_list.append(N_current)
         frac_escaped = N_escaped / N_entering
         
@@ -916,14 +921,14 @@ def protocol_step_5_escape_curve_scan(plasma_config, electrode_input, rampfrac_s
         rampfrac_end,
         data_points=d_points
     )
-    ramp_values = escape_curve_data[0]
-    escaped_list = escape_curve_data[1]
-    remaining_list = escape_curve_data[2]
-    frac_escaped_list = escape_curve_data[3]
-    drop_list = escape_curve_data[4]
-    vacdrop_list = escape_curve_data[5]
-    history_full_solutions_list = escape_curve_data[6]
-    l_p_list = escape_curve_data[7]
+    ramp_values = escape_curve_data[0][1:]
+    escaped_list = escape_curve_data[1][1:]
+    remaining_list = escape_curve_data[2][1:]
+    frac_escaped_list = escape_curve_data[3][1:]
+    drop_list = escape_curve_data[4][1:]
+    vacdrop_list = escape_curve_data[5][1:]
+    history_full_solutions_list = escape_curve_data[6][1:]
+    l_p_list = escape_curve_data[7][1:]
     return ramp_values, escaped_list, remaining_list, frac_escaped_list, drop_list, vacdrop_list, history_full_solutions_list, l_p_list
 
 
@@ -933,7 +938,7 @@ def protocol_step_6_linear_model_T_diag_drop(escaped_list, drop_list):
     T_inferred, err = linear_model_T_diag(
         escaped_list, drop_list,
         "Log(Escaped electrons) vs Confinement with Linear Fit",
-        xlabel_str=r"confinement voltage ('drop') / V",
+        xlabel_str=r"Confinement $V_b$ (V)",
         saveplotttitle="Escape_plot_drop",
         crop_factor_input=0.591
     )
@@ -946,7 +951,7 @@ def protocol_step_7_linear_model_T_diag_vacdrop(escaped_list, vacdrop_list):
     Tvac, err = linear_model_T_diag(
         escaped_list, vacdrop_list,
         "Log(Escaped electrons) vs Confinement with Linear Fit",
-        xlabel_str="confinement voltage / V",
+        xlabel_str=r"Space-Charge Corrected Confinement $V_b - \phi_s$ (V)",
         saveplotttitle="Escape_plot_vac",
         crop_factor_input=0.591
     )

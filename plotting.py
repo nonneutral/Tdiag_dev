@@ -1,9 +1,11 @@
 #%%
+#This file is for plotting the results of the finite length and temperature investigations. It is not used for any data processing, just for visualisation.
+
 import os
 import re
 import numpy as np
 import matplotlib.pyplot as plt
-import lin_fit_optimiser as lfo
+#import lin_fit_optimiser as lfo
 import pandas as pd
 
 d50mm = np.loadtxt("./useful_data/full_protocol_scan_d0.050.csv", delimiter=",")
@@ -79,47 +81,9 @@ Temperature_list_str =["T 100 K",
                 "T 1900 K",
                 "T 2000 K"
                 ]
-#fig2,axs2 = plt.figure()
-
-# ---------------- Length investigation ----------------
-"""
-for i in range(len(distance_list)):
-    data = distance_list[i]
-    distance = distance_list_str[i]
-
-    escaped_list = data[0,:]
-    vacdrop_list = data[1,:]
-    drop_list = data[2,:]
-
-    fit, cov = np.polyfit(vacdrop_list, np.log(escaped_list), deg=1, cov=True)
-    polyval = np.polyval(fit, vacdrop_list)
-
-    err_list_d.append(cov[0,0])
-    if (i+1)%2:
-        axs[0,0].plot(vacdrop_list, np.log10(escaped_list),
-                    label=f"{distance}",
-                    marker='o', linestyle='-', markersize=5, linewidth=1)
-
-        axs[0,0].plot(vacdrop_list, polyval/np.log(10))
-
-axs[0,0].set_xlabel("Confinement (V)",fontsize=18)
-axs[0,0].set_ylabel(r"$N_\text{esc}$ L investigation ",fontsize=18)
-axs[0,0].legend()
-
-
-# ---------------- Error vs length ----------------
-axs[0,1].plot([50,55,60,65,70,75,85,95,105],
-              err_list_d,
-              marker="o",
-              linestyle="-")
-
-axs[0,1].set_xlabel("Length between inner electrodes (mm)",fontsize=18)
-axs[0,1].set_yscale("log")
-axs[0,1].set_ylabel(r"Square-fit error: $\sigma \, (V^{-1})$",fontsize=18)
-
-
+"""""
 # ---------------- Temperature investigation ----------------
-"""
+
 
 q_e=1.60217662e-19 #electron charge in coulombs
 kb = kb=1.38064852e-23 #Boltzmann's constant in joules per kelvin
@@ -135,14 +99,17 @@ for j in range(len(temperature_list)):
     data = temperature_list[j]
     temperature = Temperature_list_str[j]
 
-    crop_factor = 1
+    crop_factor = 0.6
     
     escaped_list = data[0,:]
     vacdrop_list = data[1,:]
     drop_list = data[2,:]
     xaxis = vacdrop_list
 
-    fit, cov = np.polyfit(xaxis, np.log(escaped_list), deg=1, cov=True)
+    linear = int(crop_factor*len(escaped_list))
+    lin_esc = escaped_list[:linear]
+    lin_vac = vacdrop_list[:linear]
+    fit, cov = np.polyfit(lin_vac, np.log(lin_esc), deg=1, cov=True)
     polyval = np.polyval(fit, xaxis)
 
     T_estimate = -q_e*1.05/(kb*fit[0])
@@ -175,13 +142,13 @@ axs2[1].set_yscale("log")
 axs2[1].set_ylabel(r"Square-fit error: $\sigma \, (V^{-1})$",fontsize=18)
 plt.show()
 
-plt.plot(np.arange(100,2100,100),100*np.abs(np.arange(100,2100,100)-T_fit_list)/np.arange(100,2100,100), marker="o", linestyle="-",color="b")
+plt.plot(np.arange(100,2100,100),T_fit_list-np.arange(100,2100,100), marker="o", linestyle="-",color="b")
 #plt.plot(np.arange(100,2100,100),np.arange(100,2100,100))
-plt.title("Percentage deviation of linear fit T from input T", fontsize=20)
+plt.title("linear fit T vs input T", fontsize=20)
 plt.xlabel("Input Temperature (K)", fontsize=20)
 plt.ylabel("Deviation of linear fit T from input T", fontsize=20)
 plt.show()
-
+""
 
 fig, ax = plt.subplots(figsize=(10,6))  # create one figure and axis
 
@@ -209,227 +176,188 @@ plt.tight_layout()
 plt.show()
 
 """
+import numpy as np
+import matplotlib.pyplot as plt
+
+# ---------------- Storage ----------------
 err_list_d = []
 l_p_s = []
 crop_factor_list = []
 
+# ---------------- Figure setup ----------------
+fig, axs = plt.subplots(2, 1, figsize=(8.27, 9))  # A4 vertical
+
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.size": 18,
+    "axes.labelsize": 16,
+    "axes.titlesize": 18,
+})
+
+# ---------------- Parameter sweep ----------------
+d_range = np.arange(0.040, 0.105, 0.005)
+
+linestyles = ["-", "--", "-.", ":"]
+markers = ["o", "s", "^", "d", "v"]
+sum_escape_for_T = []
+where_ncyl_list = []
+V_ncyl_list = []
+last_vacdrop_list = []
+T_list = []
+
+# ---------------- Main loop ----------------
+for i, d in enumerate(d_range):
+
+    data = np.loadtxt(
+        f"useful_data_2/trial6_full_protocol_scan_d{d:.3f}.csv",
+        delimiter=","
+    )
+
+    data_label = f"d = {int(round(d*1000))} mm"
+
+    escaped_cumulative = data[0, :]
+    vacdrop_list = data[1, :]
+    l_p_list = data[3, :]
 
 
-d_range=np.arange(0.040,0.105,0.005)
-for d in d_range:
-    data = np.loadtxt(f"useful_data_2/trial6_full_protocol_scan_d{d:.3f}.csv",delimiter=",")
-    data_label = str(f"d = {round(d*1000)} mm")
+    sum_escape_for_T.append(escaped_cumulative[-1])
 
-    escaped_list = data[0,:]
-    vacdrop_list = data[1,:]
-    drop_list = data[2,:]
-    l_p_list = data[3,:]
+    escaped_list = np.diff(escaped_cumulative, prepend=escaped_cumulative[0])
+    escaped_list = escaped_list[1:]  # Remove any non-positive values
+    vacdrop_list = vacdrop_list[1:]
+    last_vacdrop = vacdrop_list[-1]
 
-    crop_factor,_,_ = lfo.find_crop_factor(escaped_list, vacdrop_list, drop_list)
-    print(f"Crop factor for {data_label}: {crop_factor}")
+    last_vacdrop_list.append(last_vacdrop)
+
+
+    where_ncyl = np.argmin(np.abs(escaped_cumulative - 0.05*32906))  # Find index where escaped_cumulative is closest to 0.05Ncyl
+    where_ncyl_list.append(where_ncyl)
+
+    crop_factor = where_ncyl
     crop_factor_list.append(crop_factor)
-    fit, cov = np.polyfit(vacdrop_list, np.log(escaped_list), deg=1, cov=True)
+    V_ncyl_list.append(vacdrop_list[crop_factor])  # Store the confinement voltage at 0.05Ncyl
+
+    escaped_list_lin = escaped_list[:crop_factor]  # Remove non-positive values from escaped_list
+    vacdrop_list_lin = vacdrop_list[:crop_factor]  # Remove corresponding values from vacdrop_list
+    
+    l_p_list = l_p_list[-65:]
+    print(f"len(escaped_list){len(escaped_list)}")
+
+    # ---------------- Plasma length ----------------
+    plasma_length = np.average(l_p_list)
+    l_p_s.append(plasma_length)
+    print(l_p_list)
+
+    # ---------------- Fit ----------------
+    fit, cov = np.polyfit(vacdrop_list_lin, np.log(escaped_list_lin), deg=1, cov=True)
     polyval = np.polyval(fit, vacdrop_list)
 
-    err_list_d.append(cov[0,0])
-
-    plasma_length = np.average(l_p_list[0])
-    #plt.plot(l_p_list)
-    l_p_s.append(plasma_length)
+    T = -1.05 * 1.60217662e-19 / (1.38064852e-23 * fit[0])  # Calculate temperature from slope
     
+    fit2, cov2 = np.polyfit(vacdrop_list, np.log(escaped_list), deg=1, cov=True)
+    err_list_d.append(np.sqrt(cov2[0, 0]))
+    T_list.append(T)
+
+    # ---------------- Plot curves (top panel) ----------------
     if int(round(d * 1000)) % 10 == 0:
+
+        style = linestyles[i % len(linestyles)]
+        marker = markers[i % len(markers)]
+
+        # Data
         axs[0].plot(vacdrop_list, np.log10(escaped_list),
-                    label=data_label,
-                    marker='o', linestyle='-', markersize=7, linewidth=1)
-        axs[0].plot(vacdrop_list, polyval/np.log(10),color="black",linewidth = 3)
+                    linestyle="none",
+                    marker=marker,
+                    markersize=4,
+                    alpha=0.5,
+                    color="black")
 
-axs[0].set_xlabel("Confinement (V)",fontsize=25)
-axs[0].set_ylabel(r"$N_\text{esc}$ L investigation",fontsize=25)
-axs[0].tick_params(axis='both', labelsize=20)
-axs[0].legend(fontsize=25)
-axs[0].grid(True)
+        # Fit
+        axs[0].plot(vacdrop_list, polyval / np.log(10),
+                    linestyle=style,
+                    linewidth=1.8,
+                    label=data_label)
 
-#fig.text(0.5, 0.96, "Finite length investigation", ha='center', fontsize=16)
-#fig.text(0.5, 0.48, "Temperature investigation", ha='center', fontsize=16)
+# ---------------- Top plot formatting ----------------
+axs[0].set_xlabel("Confinement (V)")
+axs[0].set_ylabel(r"$\log_{10}(N_\mathrm{esc})$")
+axs[0].set_title("Finite Length Investigation")
 
-# ---------------- Error vs temperature ----------------
-axs[1].plot(np.array(d_range)*1000,
-              err_list_d,
-              marker='o',
-              linestyle='-',
-              markersize=7,
-              linewidth=3,color="b")
-axs[1].grid(True)
-axs[1].set_xlabel(r"electrodes distance (mm)",fontsize=25)
+axs[0].invert_xaxis()
+axs[0].set_xlim(right=0)  # Set x-axis limit to just beyond the last vacuum drop
+axs[0].legend(loc="lower right", ncol=1, frameon=False, fontsize=14)
+axs[0].grid(True, linestyle="--", alpha=0.4)
+
+# =====================================================
+# Bottom plot: MAIN RESULT (what you asked for)
+# Plasma length vs fit error
+# =====================================================
+
+l_p_s = np.array(l_p_s)
+l_p_s = d_range
+err_list_d = np.array(err_list_d)
+
+axs[1].scatter(l_p_s*100, err_list_d,
+               marker="o")
+
+# Optional trend line (helps interpretation)
+fit_lp = np.polyfit(l_p_s, np.log(err_list_d), 1)
+x_fit = np.linspace(min(l_p_s), max(l_p_s), 100)
+y_fit = np.exp(np.polyval(fit_lp, x_fit))
+
+axs[1].plot(x_fit*100, y_fit,
+            linestyle="--",
+            linewidth=1.5)
+
+# ---------------- Bottom plot formatting ----------------
+axs[1].set_xlabel("Trap Length (cm)")
+axs[1].set_ylabel(r"Fit standard deviation $\sigma$")
+axs[1].set_title("Relationship between Trap Length and Fit Error")
+
 axs[1].set_yscale("log")
-axs[1].set_ylabel(r"Square-fit error: $\sigma \, (V^{-1})$",fontsize=25)
-axs[1].tick_params(axis='both', labelsize=20)
+axs[1].grid(True, linestyle="--", alpha=0.4)
 
-plt.tight_layout(rect=[0,0,1,0.95])
+# ---------------- Final layout ----------------
+plt.tight_layout()
+plt.savefig("finite_length_plasma_error_A4.pdf", bbox_inches="tight")
 plt.show()
-
-plt.scatter(d_range, l_p_s)
-
-print(crop_factor_list)"""
-
 #%%
 
-import pandas as pd
-from scipy.interpolate import interp1d
-import os
-import re
-import numpy as np
-import matplotlib.pyplot as plt
-import lin_fit_optimiser as lfo
 
+T_err = np.array(T_list) * 0.04  # Assuming 4% uncertainty
+# Data
+diff = np.array(T_list)-np.array(200)
+percent_diff = 100 * diff / np.array(T_list)
 
-def iter_all(substring, path):
-    return list(
-        os.path.join(root, entry)
-        for root, dirs, files in os.walk(path)
-        for entry in dirs + files
-        if substring in entry
-    )
-def u8Correction(filename):
+# Create side-by-side subplots
+fig, (ax3, ax4) = plt.subplots(1, 2, figsize=(8.27, 5))  # A4 width
 
-    try:
-        df = pd.read_csv(filename, header=None)
-    except Exception as e:
-        print(f"Error reading {filename}: {e}")
-        return
-    print(f"file name: {filename}")
-    sipm_data = df[0].values  #sipm (~escape rate)
-    u8_data = df[1].values    #u8 excitations
-    
+# =========================
+# Left: Deviation
+# =========================
+ax3.plot(l_p_s*100, diff, marker="o", linewidth=2)
+ax3.axhline(0, linestyle="--")
+ax3.errorbar(l_p_s*100,diff,  yerr=T_err, fmt='o', color='blue', ecolor='gray', elinewidth=3, capsize=3, label="Actual Temperature ± 4%")
+ax3.set_xlim(l_p_s[0]*100-0.1, l_p_s[-1]*100+0.1)
+ax3.set_xlabel("Trap Length(cm)")
+ax3.set_ylabel(r"$\Delta T = T_\text{Solver} - T_\text{Lin-fit}$ (K)")
+ax3.set_title("Absolute Deviation")
 
-    sipm_data = sipm_data
-    u8_data = u8_data
-    
-    print(np.shape(sipm_data))
-    print(np.shape(u8_data))
+# =========================
+# Right: Percentage deviation
+# =========================
+ax4.plot(l_p_s*100, percent_diff, marker="o", linewidth=2)
+ax4.errorbar(l_p_s*100, percent_diff, yerr=4, fmt='o', color='blue', ecolor='gray', elinewidth=3, capsize=3, label="Percentage Deviation ± 4%")
+ax4.axhline(0, linestyle="--")
+#ax4.set_yscale("log")
 
-    order = np.argsort(u8_data)
+ax4.set_xlim(l_p_s[0]*100-0.1, l_p_s[-1]*100+0.1)
+ax4.set_xlabel("Trap Length (cm)")
+ax4.set_ylabel(r"Percentage Deviation: $\Delta T / T_\text{Lin-fit}$ (%)")
+ax4.set_title("Percentage Deviation")
 
-    sipm_ordered = sipm_data[order]
-    u8_ordered = u8_data[order]
-    t_data = np.arange(0,len(u8_data))
+# Layout
+plt.tight_layout()
 
-    u8vsT_fit = np.polyfit(t_data,u8_ordered,4)
-    #print(u8vsT_fit)
-    u8_ordered_fit = np.polyval(u8vsT_fit,t_data)
-    u8_corrected = u8_ordered_fit * 15
-
-    #plt.plot(t_data,u8_ordered)
-    #plt.plot(t_data,u8_ordered_fit, color="g",ms=0.4)
-    #plt.plot(abs(u8_ordered_fit-u8_ordered))
-    #plt.show()
-    #plt.scatter(t_data,u8_ordered*15, label="original", marker=".", color="orange", s=2)
-    #plt.scatter(t_data,u8_corrected, label="corrected", marker=".", color="blue", s=2)
-    #plt.legend()
-    #plt.title("u8 correction")
-    #plt.xlabel("time (arb)")
-    #plt.ylabel("u8 (arb)")
-    #plt.show()
-
-    return u8_corrected, sipm_ordered
-#%%
-
-def find_offset(file_number):
-    solver_vs_experimental_fit = []
-
-    filepath1=iter_all('csv','../')[file_number] #load data
-    #df = pd.read_csv(filepath1, header=None)
-
-    #sipm_data = np.abs(df[0].values)  #sipm (~escape rate)
-    #u8_data = df[1].values*15   #u8 excitations
-
-    u8_data_init, sipm_data_init = u8Correction(filepath1)
-    sipm_data_init = np.abs(sipm_data_init)
-    plt.scatter(u8_data_init, (sipm_data_init), label="original", marker="o", color="red", s=4)
-    plt.xlabel("u8 (V)")
-    plt.ylabel("sipm (a.u.)")
-    plt.title("Original u8 vs sipm")
-    plt.legend()
-    plt.show()
-    x_range = np.arange(150,1000,50)
-    for x in x_range:
-
-        offset=x #offset to trim data for better fit - adjust as needed based on data length and quality
-        
-        u8_data = u8_data_init
-        sipm_data = sipm_data_init
-        sipm_data = sipm_data[offset:len(sipm_data)]
-        u8_data = u8_data[0:-offset]
-
-
-        order = np.argsort(u8_data)
-        u8_data = u8_data[order]
-        sipm_data = sipm_data[order]
-
-        u8_solver, sipm_solver,_,_,_ = np.loadtxt("useful_data/T200_N3.00e+05_omega_r8.02e+04_rad0.0008_B2.0.csv",delimiter=",")
-        u8_solver = -63 * (1-u8_solver)
-        sipm_solver = sipm_solver+1
-
-        u8_solver = u8_solver[len(u8_solver)//2:]
-        sipm_solver = sipm_solver[len(sipm_solver)//2:]    
-
-
-        mask = u8_data > u8_solver[0]  # Only consider data points where u8_data is greater than the first point of u8_solver
-        mask = mask & (u8_data < u8_solver[-1])  # Also ensure u8_data is less than the last point of u8_solver
-
-
-        u8_data = u8_data[mask]
-        sipm_data = sipm_data[mask]
-
-        f = interp1d(u8_solver, sipm_solver, kind='linear', fill_value="interpolate")
-        sipm_interp = f(u8_data)
-
-
-
-        diff = np.abs(np.log10(sipm_interp)-np.log10(1000*sipm_data))
-        print(f"Offset: {offset}, Sum of differences: {sum(diff)}")
-        solver_vs_experimental_fit.append(sum(diff))
-        
-        #plt.plot(u8_solver, np.log10(sipm_solver), marker="o", color="blue", label=f"offset = {offset}")
-        plt.plot(u8_data, np.log10(sipm_interp), linestyle="-", color="blue", label=f"offset = {offset}")
-        plt.plot(u8_data, np.log10(1000*sipm_data))
-        
-        plt.plot(u8_data, diff, linestyle="-", color="darkred", label=f"offset = {offset}")
-        plt.legend()
-        plt.xlabel("u8 (V)")
-        plt.ylabel("sipm (a.u.)")
-        plt.title("Solver vs Experimental Data Fit")
-        plt.show()
-    plt.plot(x_range, solver_vs_experimental_fit, marker="o", linestyle="-", color="blue")
-    plt.title("Fit of solver to experimental data vs offset", fontsize=20)
-    plt.yscale("log")
-
-    min_offset = x_range[np.argmin(solver_vs_experimental_fit)]
-    return min_offset
-
-#min_offset = find_offset(30)
-
-
-#%%
-
-offset_list = []
-
-for file_number in np.arange(1,502,50):
-    filepath1=iter_all('csv','Dec13')[file_number] #load data
-    #df = pd.read_csv(filepath1, header=None)
-    #u8_data = df[1].values*15   #u8 excitations
-    #sipm_data = df[0].values  #sipm (~escape rate)
-    offset = find_offset(file_number)
-    offset_list.append(offset)
-    u8_data, sipm_data = u8Correction(filepath1)
-    plt.scatter(u8_data,sipm_data, label = file_number, s = 4)
-plt.legend()
-plt.xlabel("u8 (V)")
-plt.ylabel("sipm (a.u.)")
-plt.title("u8 vs sipm for all files")
-plt.xlim(-54,-52)
-plt.show()
-    #list_offsets.append(min_offset)
-    #print(f"Best offset for file {file_number}: {min_offset}")
-
-# %%
+# Save
+plt.savefig("Finite_length_effect_deviation.pdf", bbox_inches="tight")

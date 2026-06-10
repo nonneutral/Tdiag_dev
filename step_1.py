@@ -583,23 +583,40 @@ def auto_flank_from_slope(xs, ys,
     iL, iR, thr_high, thr_low = attempt(sigma_low, sigma_high, min_pts)
 
     fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    #fig, axes = plt.subplots(4, 1, figsize=(10, 8), sharex=True)
     axes[0].plot(xs, ys, label="raw")
     axes[0].plot(xs, ys_s, label="smoothed", markersize=3)
-    axes[0].set_ylabel("y")
+    axes[0].set_ylabel("y=log(|SiPM|)", size=18)
     axes[0].legend()
     axes[0].grid(True)
 
     axes[1].plot(xs, dy_use, label="slope")
     axes[1].plot(xs, dy_use_s, label="slope (smoothed)")
-    axes[1].set_ylabel("|dy/dx|")
+    axes[1].set_ylabel("|dy/dx|", size=18)
     axes[1].axhline(thr_low, ls="--", label=f"thr_low={thr_low:.3g}", color="r")
     axes[1].axhline(thr_high, ls="--", label=f"thr_high={thr_high:.3g}", color="r")
     axes[1].axvline(xs[i0], ls=":", label=f"peak at x={xs[i0]:.3g}", color="m")
     axes[1].axvspan(xs[iL], xs[iR], alpha=0.2, color="y", label=f"flank region [{xs[iL]:.3g}, {xs[iR]:.3g}]")
     axes[1].legend()
     axes[1].grid(True)
+    #axes[1].set_xlabel(r"Confinement $V_b$", size=18)
+
+    #axes[2].plot(xs, curvature_use, label="curvature")
+#    axes[2].plot(xs, curvature_use_s, label="curvature (smoothed)")
+#    axes[2].set_ylabel("curvature", size=18)
+#    axes[2].legend()
+#    axes[2].grid(True)
+    
+
+#    axes[3].plot(xs, dy_use_err, label="slope error estimate")
+#    axes[3].plot(xs, dy_use_err_s, label="slope error (smoothed)")
+#    axes[3].set_ylabel("slope error", size=18)
+#    axes[3].legend()
+#    axes[3].grid(True)
+#    axes[3].set_xlabel(r"Confinement $V_b$", size=18)
 
     plt.tight_layout()
+#    plt.savefig("slope_debug.pdf",bbox_inches="tight",dpi=300,transparent=True)
     plt.show()
     if relax and iL is None:
         #progressively easier thresholds + smaller min_pts
@@ -790,8 +807,8 @@ def extract_measured_temp(drops, sipm_roi_for_fit,filepath):
     # --- Full save path ---
     save_path = os.path.join(folder, f"{name}_step_1_plot.png")
 
-    plt.text(0.0, 0.95, f"File Name = {name}\n Measured Temp = {Measured_Temp:.1f} K\n error = {err:.3g}",)
-    plt.xlabel("Confinement (V)", size=18)
+    #plt.text(0.0, 0.95, f"File Name = {name}\n Measured Temp = {Measured_Temp:.1f} K\n error = {err:.3g}",)
+    plt.xlabel(r"Confinement $V_b$", size=18)
     plt.ylabel("log(|SiPM|)", size=18)
     plt.grid(True, linestyle="--")
     plt.legend()
